@@ -19,7 +19,7 @@ Fully client-side Fabric mod (Minecraft 26.3, Java, Mojang mappings) that shows 
 
 - Java, official Mojang names, 4-space indent. Prefer records and `final` fields for `core` data types. Use a formatter only if one is already configured.
 - Mod id `storageterminal`. License AGPL-3.0 (headers/SPDX per the answer to the license question).
-- Git repo is set up (branch `main`, no remote yet). Commit small and often with clear messages.
+- Git repo: branch `main`, pushed to https://github.com/0TrashPanda/storageterminal (public). Commit small and often with clear messages.
 
 ## Commands
 
