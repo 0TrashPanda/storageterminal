@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "id": "storageterminal",
+  "version": "${version}",
+  "name": "Storage Terminal",
+  "description": "Client-side storage terminal for vanilla servers: see and move the items in all nearby containers from one screen.",
+  "authors": ["0TrashPanda"],
+  "contact": {
+    "homepage": "https://github.com/0TrashPanda/storageterminal",
+    "sources": "https://github.com/0TrashPanda/storageterminal",
+    "issues": "https://github.com/0TrashPanda/storageterminal/issues"
+  },
+  "license": "AGPL-3.0-only",
+  "icon": "assets/storageterminal/icon.png",
+  "environment": "client",
+  "entrypoints": {
+    "client": ["dev.trashpanda.storageterminal.mc.StorageTerminalClient"]
+  },
+  "depends": {
+    "fabricloader": ">=0.20.1",
+    "minecraft": "~26.3",
+    "java": ">=25",
+    "fabric-api": "*"
+  }
+}
