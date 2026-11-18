@@ -2,8 +2,8 @@
 package dev.trashpanda.storageterminal.core;
 
 /**
- * Settings (SPEC section 13). M1 uses the defaults only; the JSON config file with
- * comments arrives in M5.
+ * Settings (SPEC section 13), stored in {@code config/storageterminal/config.json} by
+ * {@link ConfigCodec}. Every key is explained in the file itself and in the README.
  */
 public record Config(
         double reachMargin,
@@ -15,7 +15,6 @@ public record Config(
         boolean abortOnDamage,
         boolean depositIncludesHotbar,
         String defaultSort,
-        boolean showRememberedOutOfReach,
         boolean debugLogging) {
 
     public static final Config DEFAULTS = new Config(
@@ -28,6 +27,10 @@ public record Config(
             true,
             false,
             "COUNT",
-            false,
             false);
+
+    public Config withDefaultSort(SortOrder sort) {
+        return new Config(reachMargin, openCooldownTicks, maxOpensPerSecond, syncTimeoutMs, minRefreshIntervalMs,
+                includeTrappedChests, abortOnDamage, depositIncludesHotbar, sort.name(), debugLogging);
+    }
 }

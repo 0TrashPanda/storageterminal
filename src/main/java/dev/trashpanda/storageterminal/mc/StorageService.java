@@ -51,8 +51,8 @@ public final class StorageService {
     private static final long LATE_OPEN_GUARD_MS = 5000L;
     private static final long AUTOSAVE_INTERVAL_MS = 30_000L;
 
-    private final Config config = Config.DEFAULTS;
-    private final RateLimiter rateLimiter = new RateLimiter(config.openCooldownTicks(), config.maxOpensPerSecond());
+    private Config config = Config.DEFAULTS;
+    private RateLimiter rateLimiter = new RateLimiter(config.openCooldownTicks(), config.maxOpensPerSecond());
     private final JobQueue jobs = new JobQueue(this::onJobFinished);
     private StorageCache cache = new StorageCache();
     private String worldId;
@@ -65,7 +65,7 @@ public final class StorageService {
     private AbstractContainerMenu passiveMenu;
     private ContainerBlocks.Found passiveTarget;
 
-    // Terminal screen state. The sort order is remembered for the session (config file: M5).
+    // Terminal screen state. The sort order is saved in the config file.
     private SortOrder sortOrder = SortOrder.parse(config.defaultSort());
     private Set<ContainerKey> reachable = Set.of();
     private ScanJob.Summary lastTerminalScan;
@@ -94,6 +94,22 @@ public final class StorageService {
         return config;
     }
 
+    /** Loads {@code config/storageterminal/config.json} (created with defaults on first start). */
+    void loadConfig() {
+        config = ConfigStore.load();
+        rateLimiter = new RateLimiter(config.openCooldownTicks(), config.maxOpensPerSecond());
+        sortOrder = SortOrder.parse(config.defaultSort());
+    }
+
+    /** Logs at INFO when debugLogging is on, else at DEBUG (hidden by default). */
+    void debug(String message, Object... args) {
+        if (config.debugLogging()) {
+            StorageTerminal.LOGGER.info(message, args);
+        } else {
+            StorageTerminal.LOGGER.debug(message, args);
+        }
+    }
+
     public StorageCache cache() {
         return cache;
     }
@@ -108,7 +124,7 @@ public final class StorageService {
         worldId = CacheStore.currentWorldId(minecraft);
         cache = worldId == null ? new StorageCache() : CacheStore.load(worldId);
         lastSaveMs = System.currentTimeMillis();
-        StorageTerminal.LOGGER.info("Loaded {} cached containers for {}", cache.size(), worldId);
+        debug("Loaded {} cached containers for {}", cache.size(), worldId);
     }
 
     void onDisconnect() {
@@ -272,7 +288,7 @@ public final class StorageService {
 
     void showFeedback(Minecraft minecraft, FeedbackKind kind, String text) {
         feedback = new Feedback(kind, text, System.currentTimeMillis());
-        StorageTerminal.LOGGER.info("[{}] {}", kind, text);
+        debug("[{}] {}", kind, text);
         if (minecraft.player != null && !(minecraft.gui.screen() instanceof TerminalScreen)) {
             minecraft.player.sendOverlayMessage(Component.literal(text));
         }
@@ -400,8 +416,13 @@ public final class StorageService {
         return sortOrder;
     }
 
+    /** Changes the sort order and remembers it in the config file. */
     void setSortOrder(SortOrder order) {
         sortOrder = order;
+        if (!order.name().equals(config.defaultSort())) {
+            config = config.withDefaultSort(order);
+            ConfigStore.save(config);
+        }
     }
 
     ScanJob.Summary lastTerminalScan() {

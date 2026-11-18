@@ -91,6 +91,10 @@ final class ScanJob implements ContainerJob {
             return Status.CANCELLED;
         }
         if (session != null) {
+            if (!guard.level().isLoaded(session.target().openPos())) {
+                cancel("the area was unloaded");
+                return Status.CANCELLED;
+            }
             if (!ContainerDiscovery.stillInServerReach(player, session.target().openPos())) {
                 cancel("moved out of reach");
                 return Status.CANCELLED;

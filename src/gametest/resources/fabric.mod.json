@@ -6,7 +6,10 @@
   "license": "AGPL-3.0-only",
   "environment": "client",
   "entrypoints": {
-    "fabric-client-gametest": ["dev.trashpanda.storageterminal.mc.ScanGameTest"]
+    "fabric-client-gametest": [
+      "dev.trashpanda.storageterminal.mc.ScanGameTest",
+      "dev.trashpanda.storageterminal.mc.MultiplayerGameTest"
+    ]
   },
   "depends": {
     "storageterminal": "*"

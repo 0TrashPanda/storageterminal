@@ -93,3 +93,15 @@ One line each: what, why. Newest at the bottom.
 - The amount stored is measured from the inventory. One container visit stores all pending stacks planned for it, so "Deposit all" with many item types opens each container once.
 - `ContainerJob` interface: scan, take and put expose their current session to the menu hooks the same way.
 - In-game test for M4: gold joins an existing partial stack; iron goes to free space and never into the ignored chest; shift-click stores all cobblestone stacks; Deposit all keeps the hotbar; full storage is reported both when the cache is out of date and after a rescan, and the ignored chest stays untouched. Each check counts items on the server before and after.
+
+## M5 (2026-11-18)
+
+- Config file `config/storageterminal/config.json`: JSON with `//` comments on every key, read with Gson's lenient mode. Created with defaults on first start. A missing key uses its default quietly; a wrong type or out-of-range value uses its default and is logged; a broken file gives all defaults. Never crashes.
+- `showRememberedOutOfReach` (a stretch goal in SPEC section 13) is not implemented, so it is not in the config.
+- The sort order is saved to `defaultSort` whenever it changes (the file is rewritten from the template, so hand-written comments are not kept).
+- Mod Menu integration skipped: it is optional in the spec and needs a config screen to be useful; the commented file covers v1. Can be added later as a soft dependency.
+- Debug noise: `/storageterminal scan` and `dump` exist only with `debugLogging` on; `version` and `cache clear` always. Routine log lines (cache loaded, take/store results, dump) go to DEBUG unless `debugLogging` is on; only "loaded", warnings and the rare late-open close stay at INFO.
+- Chunk unloads: a job stops cleanly ("the area was unloaded") if its current container's chunk unloads; containers in unloaded chunks are never chosen.
+- Lag: covered by `syncTimeoutMs` (late opens are closed by the late-open guard) and by waiting 2 ticks plus ping before reading a container back after clicks.
+- Multiplayer: a second in-game test runs scan, take-all and store-all against a dedicated server over a real connection (Fabric's `createServer()`); the mod is not loaded on the server. The 30-minute play session from the spec is in `docs/TESTING.md` as a manual step; it was not done here.
+- README rewritten for players (keys, clicks, search, settings table, commands, caveats: trapped chests, visible lid animations, anti-cheat). Manual checklist in `docs/TESTING.md`.

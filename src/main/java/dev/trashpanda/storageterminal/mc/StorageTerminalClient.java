@@ -26,9 +26,10 @@ public final class StorageTerminalClient implements ClientModInitializer {
         toggleIgnoreKey = KeyMappingHelper.registerKeyMapping(
                 new KeyMapping("key.storageterminal.toggle_ignore", InputConstants.KEY_K, category));
 
+        StorageService service = StorageService.get();
+        service.loadConfig();
         ClientCommandsSetup.register();
 
-        StorageService service = StorageService.get();
         ClientPlayConnectionEvents.JOIN.register((handler, sender, client) -> service.onJoin(client));
         ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> client.execute(service::onDisconnect));
         ClientLifecycleEvents.CLIENT_STOPPING.register(client -> service.onDisconnect());

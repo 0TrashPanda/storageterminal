@@ -18,8 +18,8 @@ import net.minecraft.world.item.ItemStack;
 
 /**
  * Client-side commands under {@code /storageterminal}. Nothing is sent to the server.
- * {@code scan}, {@code dump} and {@code cache clear} are DEBUG commands for milestone M1;
- * M5 decides which of them stay.
+ * {@code version} and {@code cache clear} are always there; {@code scan} and {@code dump} are
+ * DEBUG commands, only available with {@code debugLogging} on in the config.
  */
 final class ClientCommandsSetup {
     private static final int DUMP_CHAT_LINES = 15;
@@ -34,8 +34,12 @@ final class ClientCommandsSetup {
                             ctx.getSource().sendFeedback(Component.literal("Storage Terminal " + StorageTerminal.version()));
                             return Command.SINGLE_SUCCESS;
                         }))
-                        .then(ClientCommands.literal("scan").executes(ClientCommandsSetup::scan))
-                        .then(ClientCommands.literal("dump").executes(ClientCommandsSetup::dump))
+                        .then(ClientCommands.literal("scan")
+                                .requires(source -> StorageService.get().config().debugLogging())
+                                .executes(ClientCommandsSetup::scan))
+                        .then(ClientCommands.literal("dump")
+                                .requires(source -> StorageService.get().config().debugLogging())
+                                .executes(ClientCommandsSetup::dump))
                         .then(ClientCommands.literal("cache")
                                 .then(ClientCommands.literal("clear").executes(ctx -> {
                                     StorageService.get().clearCache();
@@ -95,12 +99,12 @@ final class ClientCommandsSetup {
         ctx.getSource().sendFeedback(prefix().append(String.format(
                 "%d item types, %d items in %d containers (%d ignored, %d unreachable, %d missing).",
                 entries.size(), totalItems, usable, ignored, unreachable, missing)));
-        StorageTerminal.LOGGER.info("Dump: {} item types, {} items in {} containers", entries.size(), totalItems, usable);
+        service.debug("Dump: {} item types, {} items in {} containers", entries.size(), totalItems, usable);
         for (int i = 0; i < entries.size(); i++) {
             StorageIndex.Entry entry = entries.get(i);
             String name = displayName(minecraft, entry);
             String line = String.format("%,d  %s  (in %d)", entry.total(), name, entry.locations().size());
-            StorageTerminal.LOGGER.info("Dump: {}  {}  {}", entry.total(), entry.item().itemId(),
+            service.debug("Dump: {}  {}  {}", entry.total(), entry.item().itemId(),
                     entry.item().hasComponents() ? entry.item().components() : "");
             if (i < DUMP_CHAT_LINES) {
                 ctx.getSource().sendFeedback(Component.literal(line));
