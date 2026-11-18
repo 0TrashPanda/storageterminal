@@ -19,7 +19,7 @@ import net.minecraft.client.player.LocalPlayer;
  * never opened; blocked ones are marked unreachable without trying. Aborts (closing any open
  * menu) on the conditions in SPEC section 7.
  */
-final class ScanJob implements Job {
+final class ScanJob implements ContainerJob {
     /** Final counts, for the message to the player. */
     record Summary(int refreshed, int skippedRecent, int ignored, int unreachable, long millis, String abortReason) {
     }
@@ -63,7 +63,8 @@ final class ScanJob implements Job {
     }
 
     /** The session waiting for the server, if any; used by the menu hooks. */
-    ContainerSession activeSession() {
+    @Override
+    public ContainerSession activeSession() {
         return session;
     }
 

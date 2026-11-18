@@ -83,3 +83,13 @@ One line each: what, why. Newest at the bottom.
 - Feedback (success / partial / failed, with a check, "!" or cross icon) shows in the status line for 5 s, or in the action bar when the terminal is closed. Status during a take: "Taking 18 Iron Ingot (1/3)" with a Cancel button; the item's entry is dimmed.
 - Abort checks moved into a shared `JobGuard` used by scan and take.
 - In-game test for M3: one stack from three containers, half a stack that splits a stack, a shift-click on a chest emptied after the scan (takes only what is really there), a full inventory, and closing the terminal right after a click. Each check counts the item on the server (containers, inventory, cursor) before and after.
+
+## M4 (2026-11-18)
+
+- Clicks in the inventory panel: click a stack to store it, shift-click to store every stack of that item (hotbar included). "Deposit all" stores the main inventory only; the hotbar only with `depositIncludesHotbar` (default false). Armor and offhand are never touched.
+- Where items go, per item type: containers with a partial stack of it that has room, then containers that hold it and have an empty slot, then any container with an empty slot; nearest first within each group (`PutPlanner`). Containers never looked into (no snapshot) are not used, since their free space is unknown. Ignored containers are never used. A shulker box item is never planned into a shulker box.
+- Items move with shift-click (QUICK_MOVE) from the inventory slot in the open container's menu, one click per stack, at most 6 per tick. Inside one container vanilla fills matching stacks first, then empty slots; so a container chosen for its partial stack may also get the rest in its empty slots before the next container's partial stacks are used. Accepted: simpler and fewer clicks than placing exact amounts with the cursor.
+- Whatever does not fit stays in the inventory and goes on to the next planned container; if the cache was wrong about free space, the job finds out on the spot and reports "no free space". If the cache already shows no room, nothing is opened.
+- The amount stored is measured from the inventory. One container visit stores all pending stacks planned for it, so "Deposit all" with many item types opens each container once.
+- `ContainerJob` interface: scan, take and put expose their current session to the menu hooks the same way.
+- In-game test for M4: gold joins an existing partial stack; iron goes to free space and never into the ignored chest; shift-click stores all cobblestone stacks; Deposit all keeps the hotbar; full storage is reported both when the cache is out of date and after a rescan, and the ignored chest stays untouched. Each check counts items on the server before and after.

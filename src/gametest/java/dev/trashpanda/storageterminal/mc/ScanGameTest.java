@@ -123,7 +123,143 @@ public final class ScanGameTest implements FabricClientGameTest {
             });
             terminalChecks(context, world);
             takeChecks(context, world);
+            depositChecks(context, world);
         }
+    }
+
+    /**
+     * M4: storing items. Partial stacks first, then same item, then free space; ignored containers
+     * never used; hotbar kept by Deposit all; full storage reported; every item counted on the server.
+     */
+    private void depositChecks(ClientGameTestContext context, TestSingleplayerContext world) {
+        context.getInput().pressKey(StorageTerminalClient.openTerminalKey());
+        context.waitForScreen(TerminalScreen.class);
+        context.waitFor(mc -> StorageService.get().runningScan() == null, 600);
+        BlockPos chestC = at(-2, 0, 0);
+        BlockPos chestH = at(3, 0, -1);
+
+        // Gold: trapped chest C already has a partial gold stack, so the 5 gold go there.
+        long goldTotal = serverCount(world, "minecraft:gold_ingot", false);
+        long goldInC = serverCountAt(world, chestC, "minecraft:gold_ingot");
+        clickInventory(context, "minecraft:gold_ingot", false);
+        context.takeScreenshot("m4-storing");
+        waitForPut(context);
+        check(serverCount(world, "minecraft:gold_ingot", true) == 0, "gold left the inventory");
+        check(serverCountAt(world, chestC, "minecraft:gold_ingot") == goldInC + 5, "gold joined the partial stack in C");
+        check(serverCount(world, "minecraft:gold_ingot", false) == goldTotal, "gold neither lost nor duplicated");
+        expectFeedback(context, StorageService.FeedbackKind.SUCCESS);
+
+        // Iron: no container holds iron, so it goes to free space, never the ignored chest H.
+        long ironTotal = serverCount(world, "minecraft:iron_ingot", false);
+        clickInventory(context, "minecraft:iron_ingot", false);
+        waitForPut(context);
+        check(serverCount(world, "minecraft:iron_ingot", true) == 0, "iron left the inventory");
+        check(serverCount(world, "minecraft:iron_ingot", false) == ironTotal, "iron neither lost nor duplicated");
+        check(serverCountAt(world, chestH, "minecraft:iron_ingot") == 0, "ignored chest H not used");
+
+        // Shift-click: every cobblestone stack.
+        world.getServer().runCommand("give @a minecraft:cobblestone 100");
+        context.waitTicks(3);
+        long cobbleTotal = serverCount(world, "minecraft:cobblestone", false);
+        check(cobbleTotal == 132, "132 cobblestone before storing, got " + cobbleTotal);
+        clickInventory(context, "minecraft:cobblestone", true);
+        waitForPut(context);
+        check(serverCount(world, "minecraft:cobblestone", true) == 0, "all cobblestone stacks stored");
+        check(serverCount(world, "minecraft:cobblestone", false) == cobbleTotal, "cobblestone neither lost nor duplicated");
+
+        // Deposit all: main inventory only, the hotbar stays.
+        world.getServer().runCommand("item replace entity @a inventory.5 with minecraft:string 7");
+        world.getServer().runCommand("item replace entity @a inventory.6 with minecraft:flint 3");
+        world.getServer().runCommand("item replace entity @a hotbar.4 with minecraft:torch 16");
+        context.waitTicks(3);
+        long stringTotal = serverCount(world, "minecraft:string", false);
+        clickDepositAll(context);
+        waitForPut(context);
+        check(serverCount(world, "minecraft:string", true) == 0 && serverCount(world, "minecraft:flint", true) == 0,
+                "main inventory stored");
+        check(serverCount(world, "minecraft:torch", true) == 16, "hotbar kept");
+        check(serverCount(world, "minecraft:string", false) == stringTotal, "string neither lost nor duplicated");
+        check(serverCount(world, "minecraft:flint", false) == 3, "flint neither lost nor duplicated");
+        context.takeScreenshot("m4-deposit-all");
+
+        // Full storage. Fill every usable container behind the cache's back: the job finds no room on the spot.
+        for (int[] d : new int[][] {{2, 0, 0}, {0, 0, 2}, {1, 0, 2}, {-2, 0, 0}, {-2, 0, 2}, {2, 0, 2}, {-1, 0, -3}}) {
+            BlockPos pos = at(d[0], d[1], d[2]);
+            for (int slot = 0; slot < 27; slot++) {
+                world.getServer().runCommand(item(pos, slot, "minecraft:stone", 64));
+            }
+        }
+        world.getServer().runCommand("give @a minecraft:dirt 10");
+        context.waitTicks(3);
+        long applesInH = serverCountAt(world, chestH, "minecraft:apple");
+        clickInventory(context, "minecraft:dirt", false);
+        waitForPut(context);
+        check(serverCount(world, "minecraft:dirt", true) == 10, "dirt still in the inventory");
+        check(serverCountAt(world, chestH, "minecraft:dirt") == 0, "ignored chest H not used, even when all else is full");
+        expectFeedback(context, StorageService.FeedbackKind.FAILED);
+        context.takeScreenshot("m4-no-space");
+
+        // After a rescan the cache knows it is full: refused before opening anything.
+        context.runOnClient(mc -> StorageService.get().startTerminalScan(mc, true));
+        context.waitFor(mc -> StorageService.get().runningScan() == null, 600);
+        clickInventory(context, "minecraft:dirt", false);
+        context.waitTicks(2);
+        context.runOnClient(mc -> check(StorageService.get().runningPut() == null, "nothing to visit"));
+        expectFeedback(context, StorageService.FeedbackKind.FAILED);
+        check(serverCount(world, "minecraft:dirt", true) == 10, "dirt still in the inventory");
+        check(serverCountAt(world, chestH, "minecraft:apple") == applesInH && serverCountAt(world, chestH, "minecraft:dirt") == 0,
+                "ignored chest H unchanged");
+        context.runOnClient(mc -> mc.gui.setScreen(null));
+    }
+
+    private void clickInventory(ClientGameTestContext context, String itemId, boolean shift) {
+        int index = context.computeOnClient(mc -> {
+            for (int i = 0; i < 36; i++) {
+                if (countIf(mc.player.getInventory().getItem(i), itemId) > 0) {
+                    return i;
+                }
+            }
+            return -1;
+        });
+        check(index >= 0, itemId + " is in the inventory");
+        double scale = context.computeOnClient(mc -> mc.getWindow().getGuiScale());
+        int[] center = context.computeOnClient(mc -> ((TerminalScreen) mc.gui.screen()).inventorySlotCenter(index));
+        context.getInput().setCursorPos(center[0] * scale, center[1] * scale);
+        context.waitTick();
+        if (shift) {
+            context.getInput().holdShift();
+        }
+        context.getInput().pressMouse(InputConstants.MOUSE_BUTTON_LEFT);
+        if (shift) {
+            context.getInput().releaseShift();
+        }
+        context.waitTick();
+    }
+
+    private void clickDepositAll(ClientGameTestContext context) {
+        double scale = context.computeOnClient(mc -> mc.getWindow().getGuiScale());
+        int[] center = context.computeOnClient(mc -> ((TerminalScreen) mc.gui.screen()).depositAllCenter());
+        context.getInput().setCursorPos(center[0] * scale, center[1] * scale);
+        context.waitTick();
+        context.getInput().pressMouse(InputConstants.MOUSE_BUTTON_LEFT);
+        context.waitTick();
+    }
+
+    private static void waitForPut(ClientGameTestContext context) {
+        context.waitFor(mc -> StorageService.get().runningPut() == null, 600);
+        context.waitTicks(5);
+    }
+
+    private long serverCountAt(TestSingleplayerContext world, BlockPos pos, String itemId) {
+        return world.getServer().computeOnServer(server -> {
+            long n = 0;
+            if (server.overworld().getBlockEntity(pos) instanceof net.minecraft.world.Container c) {
+                for (int i = 0; i < c.getContainerSize(); i++) {
+                    n += countIf(c.getItem(i), itemId);
+                }
+            }
+            return n;
+        });
     }
 
     /**

@@ -31,7 +31,7 @@ import net.minecraft.world.item.ItemStack;
 /**
  * The storage terminal (SPEC section 8, layout A from the approved mockups): search, sort and
  * rescan on top, then a status line, the aggregated item grid with a scrollbar, and the player's
- * inventory. Clicking a grid entry takes items (M3); the inventory panel is display only until M4.
+ * inventory. Clicking a grid entry takes items (M3); clicking an inventory stack stores it (M4).
  *
  * <p>Controls are placed by {@link #layout()} only, so they can move to a sidebar (layout B)
  * later without touching the rest.
@@ -113,9 +113,8 @@ public final class TerminalScreen extends Screen {
         }).bounds(0, 0, 46, 14).build();
         rescanButton = Button.builder(Component.literal("Scan"),
                 b -> service.startTerminalScan(minecraft, true)).bounds(0, 0, 30, 14).build();
-        depositAllButton = Button.builder(Component.literal("Deposit all"), b -> {
-        }).bounds(0, 0, 62, 14).build();
-        depositAllButton.active = false; // M4
+        depositAllButton = Button.builder(Component.literal("Deposit all"),
+                b -> service.startPut(minecraft, service.depositAllSlots())).bounds(0, 0, 62, 14).build();
         cancelButton = Button.builder(Component.literal("Cancel"), b -> service.cancelJobs("cancelled"))
                 .bounds(0, 0, 40, 12).build();
         cancelButton.visible = false;
@@ -213,7 +212,7 @@ public final class TerminalScreen extends Screen {
         refreshEntries();
         drawPanel(g, left, top, PANEL_W, FIXED_H + rows * SLOT);
         g.text(font, title, left + PAD, top + 6, TEXT, false);
-        cancelButton.visible = service.runningTake() != null;
+        cancelButton.visible = service.runningTake() != null || service.runningPut() != null;
         drawStatus(g);
         drawGrid(g);
         drawScrollbar(g);
@@ -254,6 +253,16 @@ public final class TerminalScreen extends Screen {
         if (take != null) {
             String where = take.stopCount() > 1 ? " (" + Math.max(1, take.currentStop()) + "/" + take.stopCount() + ")" : "";
             String text = "Taking " + CountFormat.exact(take.wanted()) + " " + take.itemName() + where;
+            g.text(font, clip(text, STATUS_W - 44), x, y, TEXT, false);
+            if (font.width(text) > STATUS_W - 44) {
+                statusDetail = List.of(Component.literal(text));
+            }
+            return;
+        }
+        PutJob put = service.runningPut();
+        if (put != null) {
+            String where = put.visitCount() > 1 ? " (" + Math.max(1, put.currentVisit()) + "/" + put.visitCount() + ")" : "";
+            String text = "Storing " + put.what() + where;
             g.text(font, clip(text, STATUS_W - 44), x, y, TEXT, false);
             if (font.width(text) > STATUS_W - 44) {
                 statusDetail = List.of(Component.literal(text));
@@ -433,6 +442,8 @@ public final class TerminalScreen extends Screen {
 
     private void drawInventory(GuiGraphicsExtractor g) {
         Inventory inventory = minecraft.player == null ? null : minecraft.player.getInventory();
+        PutJob put = service.runningPut();
+        java.util.Set<Integer> storing = put == null ? java.util.Set.of() : put.pendingInventorySlots();
         for (int i = 0; i < 36; i++) {
             int[] xy = inventorySlotXY(i);
             drawSlot(g, xy[0], xy[1]);
@@ -441,6 +452,10 @@ public final class TerminalScreen extends Screen {
                 if (!stack.isEmpty()) {
                     g.item(stack, xy[0] + 1, xy[1] + 1);
                     g.itemDecorations(font, stack, xy[0] + 1, xy[1] + 1);
+                    if (storing.contains(i)) {
+                        g.nextStratum();
+                        g.fill(xy[0] + 1, xy[1] + 1, xy[0] + SLOT - 1, xy[1] + SLOT - 1, 0xA08B8B8B);
+                    }
                 }
             }
         }
@@ -539,6 +554,28 @@ public final class TerminalScreen extends Screen {
             scrollTo(event.y());
             return true;
         }
+        int inventoryIndex = inventoryIndexAt((int) event.x(), (int) event.y());
+        if (inventoryIndex >= 0 && minecraft.player != null) {
+            if (event.button() == InputConstants.MOUSE_BUTTON_LEFT) {
+                ItemStack clicked = minecraft.player.getInventory().getItem(inventoryIndex);
+                if (!clicked.isEmpty()) {
+                    List<Integer> slots = new ArrayList<>();
+                    if (event.hasShiftDown() || minecraft.hasShiftDown()) {
+                        // Every stack of this item, main inventory and hotbar.
+                        for (int i = 0; i < 36; i++) {
+                            ItemStack other = minecraft.player.getInventory().getItem(i);
+                            if (!other.isEmpty() && ItemStack.isSameItemSameComponents(other, clicked)) {
+                                slots.add(i);
+                            }
+                        }
+                    } else {
+                        slots.add(inventoryIndex);
+                    }
+                    service.startPut(minecraft, slots);
+                }
+            }
+            return true;
+        }
         if (gridSlotAt((int) event.x(), (int) event.y()) >= 0) {
             StorageIndex.Entry entry = entryAt((int) event.x(), (int) event.y());
             if (entry != null) {
@@ -609,16 +646,31 @@ public final class TerminalScreen extends Screen {
     }
 
     private ItemStack inventoryStackAt(int x, int y) {
-        if (minecraft.player == null) {
-            return ItemStack.EMPTY;
-        }
+        int index = inventoryIndexAt(x, y);
+        return index < 0 || minecraft.player == null ? ItemStack.EMPTY : minecraft.player.getInventory().getItem(index);
+    }
+
+    /** Inventory index (0-35) under the mouse, or -1. */
+    private int inventoryIndexAt(int x, int y) {
         for (int i = 0; i < 36; i++) {
             int[] xy = inventorySlotXY(i);
             if (x >= xy[0] && x < xy[0] + SLOT && y >= xy[1] && y < xy[1] + SLOT) {
-                return minecraft.player.getInventory().getItem(i);
+                return i;
             }
         }
-        return ItemStack.EMPTY;
+        return -1;
+    }
+
+    /** Center of inventory slot {@code index} (0-8 hotbar, 9-35 main), in GUI coordinates. For tests. */
+    int[] inventorySlotCenter(int index) {
+        int[] xy = inventorySlotXY(index);
+        return new int[] {xy[0] + SLOT / 2, xy[1] + SLOT / 2};
+    }
+
+    /** Center of the Deposit all button. For tests. */
+    int[] depositAllCenter() {
+        return new int[] {depositAllButton.getX() + depositAllButton.getWidth() / 2,
+                depositAllButton.getY() + depositAllButton.getHeight() / 2};
     }
 
     // ---- for tests --------------------------------------------------------------------------

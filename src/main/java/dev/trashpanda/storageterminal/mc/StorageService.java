@@ -7,6 +7,7 @@ import dev.trashpanda.storageterminal.core.ContainerKey;
 import dev.trashpanda.storageterminal.core.ContainerRecord;
 import dev.trashpanda.storageterminal.core.CountFormat;
 import dev.trashpanda.storageterminal.core.ItemKey;
+import dev.trashpanda.storageterminal.core.PutPlanner;
 import dev.trashpanda.storageterminal.core.ContainerTag;
 import dev.trashpanda.storageterminal.core.Job;
 import dev.trashpanda.storageterminal.core.JobQueue;
@@ -17,7 +18,10 @@ import dev.trashpanda.storageterminal.core.StorageCache;
 import dev.trashpanda.storageterminal.core.TakePlanner;
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.function.Consumer;
 import net.minecraft.client.Minecraft;
@@ -28,7 +32,9 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.network.protocol.game.ServerboundContainerClosePacket;
 import net.minecraft.world.inventory.AbstractContainerMenu;
 import net.minecraft.world.inventory.MenuType;
+import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.level.block.ShulkerBoxBlock;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
 
@@ -198,8 +204,8 @@ public final class StorageService {
         if (player == null || minecraft.level == null) {
             return;
         }
-        if (runningTake() != null) {
-            showFeedback(minecraft, FeedbackKind.FAILED, "Busy: wait for the current take to finish");
+        if (runningTake() != null || runningPut() != null) {
+            showFeedback(minecraft, FeedbackKind.FAILED, "Busy: wait for the current job to finish");
             return;
         }
         if (player.isSecondaryUseActive()) {
@@ -279,6 +285,105 @@ public final class StorageService {
 
     TakeJob runningTake() {
         return jobs.current() instanceof TakeJob take ? take : null;
+    }
+
+    PutJob runningPut() {
+        return jobs.current() instanceof PutJob put ? put : null;
+    }
+
+    /**
+     * Deposits the given inventory slots (0-35). {@code what} names them in messages: an item
+     * name for one item type, else "items".
+     */
+    void startPut(Minecraft minecraft, List<Integer> inventorySlots) {
+        LocalPlayer player = minecraft.player;
+        if (player == null || minecraft.level == null) {
+            return;
+        }
+        if (runningTake() != null || runningPut() != null) {
+            showFeedback(minecraft, FeedbackKind.FAILED, "Busy: wait for the current job to finish");
+            return;
+        }
+        if (player.isSecondaryUseActive()) {
+            showFeedback(minecraft, FeedbackKind.FAILED, "Stop sneaking to store items");
+            return;
+        }
+        List<PutJob.Request> requests = new ArrayList<>();
+        Map<ItemKey, ItemStack> types = new LinkedHashMap<>();
+        for (int index : inventorySlots) {
+            ItemStack stack = player.getInventory().getItem(index);
+            if (stack.isEmpty()) {
+                continue;
+            }
+            ItemKey key = ItemKeys.toKey(stack, minecraft.level.registryAccess());
+            ItemStack reference = stack.copyWithCount(1);
+            requests.add(new PutJob.Request(index, key, reference));
+            types.putIfAbsent(key, reference);
+        }
+        if (requests.isEmpty()) {
+            return;
+        }
+        String what = types.size() == 1 ? types.values().iterator().next().getHoverName().getString() : "items";
+
+        jobs.cancelAll("take");
+        List<ContainerDiscovery.Target> targets = refreshReachable(minecraft);
+        Map<ContainerKey, ContainerDiscovery.Target> byKey = new LinkedHashMap<>();
+        List<ContainerRecord> nearestFirst = new ArrayList<>();
+        for (ContainerDiscovery.Target target : targets) {
+            ContainerRecord record = cache.get(target.key());
+            if (record != null && record.hasSnapshot()) {
+                byKey.put(target.key(), target);
+                nearestFirst.add(record);
+            }
+        }
+        Map<ItemKey, Set<ContainerKey>> planned = new LinkedHashMap<>();
+        Set<ContainerKey> visitOrder = new LinkedHashSet<>();
+        for (Map.Entry<ItemKey, ItemStack> type : types.entrySet()) {
+            boolean shulkerItem = type.getValue().getItem() instanceof BlockItem block
+                    && block.getBlock() instanceof ShulkerBoxBlock;
+            List<PutPlanner.PutStop> stops = PutPlanner.plan(type.getKey(), type.getValue().getMaxStackSize(),
+                    nearestFirst, source -> !(shulkerItem && ((ContainerRecord) source).type()
+                            == dev.trashpanda.storageterminal.core.ContainerType.SHULKER_BOX));
+            Set<ContainerKey> keys = new LinkedHashSet<>();
+            for (PutPlanner.PutStop stop : stops) {
+                ContainerKey key = ((ContainerRecord) stop.source()).key();
+                keys.add(key);
+                visitOrder.add(key);
+            }
+            planned.put(type.getKey(), keys);
+        }
+        if (visitOrder.isEmpty()) {
+            showFeedback(minecraft, FeedbackKind.FAILED, "No free space in reach");
+            return;
+        }
+        List<ContainerDiscovery.Target> visits = new ArrayList<>();
+        for (ContainerKey key : visitOrder) {
+            visits.add(byKey.get(key));
+        }
+        jobs.enqueue(new PutJob(minecraft, cache, rateLimiter, config, requests, planned, visits, what,
+                result -> onPutFinished(minecraft, result), this::armLateOpenGuard));
+    }
+
+    private void onPutFinished(Minecraft minecraft, PutJob.Result result) {
+        save();
+        String stored = "Stored " + CountFormat.exact(result.moved());
+        if (result.problem() == null) {
+            showFeedback(minecraft, FeedbackKind.SUCCESS, stored + " " + result.what());
+        } else if (result.moved() > 0) {
+            showFeedback(minecraft, FeedbackKind.PARTIAL, stored + " of " + CountFormat.exact(result.wanted()) + " "
+                    + result.what() + ": " + result.problem());
+        } else {
+            showFeedback(minecraft, FeedbackKind.FAILED, "Stored no " + result.what() + ": " + result.problem());
+        }
+    }
+
+    /** Inventory slots for "Deposit all": the main inventory, plus the hotbar if configured. Never armor or offhand. */
+    List<Integer> depositAllSlots() {
+        List<Integer> slots = new ArrayList<>();
+        for (int i = config.depositIncludesHotbar() ? 0 : 9; i < 36; i++) {
+            slots.add(i);
+        }
+        return slots;
     }
 
     /** The terminal closed: stop all work cleanly and save. */
@@ -434,15 +539,9 @@ public final class StorageService {
         return session != null && session.isWaitingForMenu() ? session : null;
     }
 
-    /** The container session of the running job (scan or take), if any. */
+    /** The container session of the running job (scan, take or put), if any. */
     ContainerSession activeSession() {
-        if (jobs.current() instanceof ScanJob scan) {
-            return scan.activeSession();
-        }
-        if (jobs.current() instanceof TakeJob take) {
-            return take.activeSession();
-        }
-        return null;
+        return jobs.current() instanceof ContainerJob job ? job.activeSession() : null;
     }
 
     private ScanJob currentScan() {

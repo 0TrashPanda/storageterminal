@@ -21,7 +21,7 @@ import net.minecraft.world.item.ItemStack;
  * fresh contents; if a container has less than the cache said, the rest is taken from the next one.
  * The amount moved is measured from the inventory, never assumed.
  */
-final class TakeJob implements Job {
+final class TakeJob implements ContainerJob {
     /** What happened, for the message to the player. */
     record Result(ItemKey item, String itemName, long wanted, long moved, String problem) {
     }
@@ -92,7 +92,8 @@ final class TakeJob implements Job {
         return stopCount;
     }
 
-    ContainerSession activeSession() {
+    @Override
+    public ContainerSession activeSession() {
         return session;
     }
 

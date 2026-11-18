@@ -93,7 +93,7 @@ final class TakeOperator implements ContainerSession.Operator {
         }
         // Wait for the server to confirm or correct the clicks before reading the result.
         if (settleTicks < 0) {
-            settleTicks = settleTicksFor(minecraft);
+            settleTicks = settleTicks(minecraft);
         }
         if (settleTicks-- > 0) {
             return false;
@@ -217,7 +217,7 @@ final class TakeOperator implements ContainerSession.Operator {
     }
 
     /** Two ticks plus the round trip to the server. */
-    private static int settleTicksFor(Minecraft minecraft) {
+    static int settleTicks(Minecraft minecraft) {
         LocalPlayer player = minecraft.player;
         int latencyMs = 0;
         if (minecraft.getConnection() != null && player != null) {
