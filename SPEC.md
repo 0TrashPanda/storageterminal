@@ -142,7 +142,7 @@ Custom `Screen` (not a container screen), vanilla look (use vanilla GUI textures
 - **Bottom**: the player's inventory (main + hotbar) in vanilla layout, used for deposit and as the take target display.
 - **Search**: plain text matches item display name; `@modid` matches namespace; `#tag` matches item tags. Case-insensitive. Keep it simple.
 - **Sort**: by name, by count (desc), by mod id, by last-changed. Remember the last choice in config.
-- **Tooltip** on a grid entry: the item's normal tooltip plus total count and a short breakdown (`in 3 containers`, with nearest few positions).
+- **Tooltip** on a grid entry: the item's normal tooltip plus the exact total count. No per-container breakdown (the user does not care which chest holds what).
 - **Click hints** at the bottom of that tooltip, in a muted color: `Click: 1 stack · Right-click: half` / `Shift-click: fill inventory`.
 - **Not-rescanned marker**: a grid entry whose count comes (partly) from saved contents that have not been rescanned this session gets a small amber square in its top-left corner.
 - **Busy look**: entries that are part of a running take/put job are dimmed until the job finishes.

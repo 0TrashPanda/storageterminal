@@ -2,8 +2,11 @@
 package dev.trashpanda.storageterminal.core;
 
 import java.util.Collections;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
@@ -17,9 +20,11 @@ public final class ContainerRecord implements StorageSource {
     private long refreshedAtGameTime;
     private final Set<String> tags;
     private ContainerState state;
+    private final Map<ItemKey, Long> changedAt;
 
     public ContainerRecord(ContainerKey key, ContainerType type, List<BlockPosition> positions, List<SlotStack> slots,
-            long refreshedAtMillis, long refreshedAtGameTime, Set<String> tags, ContainerState state) {
+            long refreshedAtMillis, long refreshedAtGameTime, Set<String> tags, ContainerState state,
+            Map<ItemKey, Long> changedAt) {
         this.key = Objects.requireNonNull(key, "key");
         this.type = Objects.requireNonNull(type, "type");
         this.positions = List.copyOf(positions);
@@ -28,11 +33,12 @@ public final class ContainerRecord implements StorageSource {
         this.refreshedAtGameTime = refreshedAtGameTime;
         this.tags = new LinkedHashSet<>(tags);
         this.state = Objects.requireNonNull(state, "state");
+        this.changedAt = new LinkedHashMap<>(changedAt);
     }
 
     /** A container we know exists but have never looked into. */
     public static ContainerRecord unseen(ContainerKey key, ContainerType type, List<BlockPosition> positions) {
-        return new ContainerRecord(key, type, positions, List.of(), 0L, 0L, Set.of(), ContainerState.STALE);
+        return new ContainerRecord(key, type, positions, List.of(), 0L, 0L, Set.of(), ContainerState.STALE, Map.of());
     }
 
     public ContainerKey key() {
@@ -87,6 +93,21 @@ public final class ContainerRecord implements StorageSource {
     }
 
     @Override
+    public boolean isStale() {
+        return state == ContainerState.STALE && hasSnapshot();
+    }
+
+    @Override
+    public long changedAt(ItemKey item) {
+        return changedAt.getOrDefault(item, 0L);
+    }
+
+    /** Per item: when its count in this container last changed. */
+    public Map<ItemKey, Long> changedAtMap() {
+        return Collections.unmodifiableMap(changedAt);
+    }
+
+    @Override
     public boolean isUsable() {
         return !isIgnored() && (state == ContainerState.FRESH || state == ContainerState.STALE);
     }
@@ -102,6 +123,14 @@ public final class ContainerRecord implements StorageSource {
 
     void applySnapshot(ContainerType type, List<BlockPosition> positions, List<SlotStack> slots,
             long nowMillis, long gameTime) {
+        Map<ItemKey, Long> before = countByItem(this.slots);
+        Map<ItemKey, Long> after = countByItem(slots);
+        for (Map.Entry<ItemKey, Long> e : after.entrySet()) {
+            if (!e.getValue().equals(before.get(e.getKey()))) {
+                changedAt.put(e.getKey(), nowMillis);
+            }
+        }
+        changedAt.keySet().retainAll(after.keySet());
         this.type = type;
         this.positions = List.copyOf(positions);
         this.slots = List.copyOf(slots);
@@ -123,6 +152,17 @@ public final class ContainerRecord implements StorageSource {
     }
 
     ContainerRecord copy() {
-        return new ContainerRecord(key, type, positions, slots, refreshedAtMillis, refreshedAtGameTime, tags, state);
+        return new ContainerRecord(key, type, positions, slots, refreshedAtMillis, refreshedAtGameTime, tags, state,
+                changedAt);
+    }
+
+    private static Map<ItemKey, Long> countByItem(List<SlotStack> slots) {
+        Map<ItemKey, Long> counts = new HashMap<>();
+        for (SlotStack slot : slots) {
+            if (!slot.isEmpty()) {
+                counts.merge(slot.item(), (long) slot.count(), Long::sum);
+            }
+        }
+        return counts;
     }
 }

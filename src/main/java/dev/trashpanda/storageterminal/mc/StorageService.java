@@ -3,14 +3,18 @@ package dev.trashpanda.storageterminal.mc;
 
 import dev.trashpanda.storageterminal.StorageTerminal;
 import dev.trashpanda.storageterminal.core.Config;
+import dev.trashpanda.storageterminal.core.ContainerKey;
 import dev.trashpanda.storageterminal.core.ContainerTag;
 import dev.trashpanda.storageterminal.core.Job;
 import dev.trashpanda.storageterminal.core.JobQueue;
 import dev.trashpanda.storageterminal.core.RateLimiter;
 import dev.trashpanda.storageterminal.core.SlotStack;
+import dev.trashpanda.storageterminal.core.SortOrder;
 import dev.trashpanda.storageterminal.core.StorageCache;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.function.Consumer;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientPacketListener;
@@ -49,6 +53,11 @@ public final class StorageService {
     private AbstractContainerMenu passiveMenu;
     private ContainerBlocks.Found passiveTarget;
 
+    // Terminal screen state. The sort order is remembered for the session (config file: M5).
+    private SortOrder sortOrder = SortOrder.parse(config.defaultSort());
+    private Set<ContainerKey> reachable = Set.of();
+    private ScanJob.Summary lastTerminalScan;
+
     private StorageService() {
     }
 
@@ -83,6 +92,7 @@ public final class StorageService {
         save();
         cache = new StorageCache();
         worldId = null;
+        reachable = Set.of();
         lastManualUsePos = null;
         lateOpenGuardUntilMs = 0;
     }
@@ -127,6 +137,77 @@ public final class StorageService {
             onFinished.accept(summary);
         }, this::armLateOpenGuard));
         return null;
+    }
+
+    // ---- terminal ----------------------------------------------------------------------
+
+    /** Opens the terminal from the cache at once, then refreshes containers in reach in the background. */
+    void openTerminal(Minecraft minecraft) {
+        if (minecraft.player == null || minecraft.level == null) {
+            return;
+        }
+        refreshReachable(minecraft);
+        lastTerminalScan = null;
+        minecraft.gui.setScreen(new TerminalScreen());
+        startTerminalScan(minecraft, false);
+    }
+
+    /** Background refresh for the terminal. {@code force} rescans containers refreshed moments ago too. */
+    void startTerminalScan(Minecraft minecraft, boolean force) {
+        if (minecraft.player == null || minecraft.level == null) {
+            return;
+        }
+        if (jobs.isBusy()) {
+            if (!force) {
+                return;
+            }
+            jobs.cancelAll("rescan");
+        }
+        List<ContainerDiscovery.Target> targets = refreshReachable(minecraft);
+        jobs.enqueue(new ScanJob(minecraft, cache, rateLimiter, config, force, targets, summary -> {
+            lastTerminalScan = summary;
+            save();
+            if (minecraft.player != null && minecraft.level != null) {
+                refreshReachable(minecraft);
+            }
+        }, this::armLateOpenGuard));
+    }
+
+    /** The terminal closed: stop all work cleanly and save. */
+    void onTerminalClosed() {
+        jobs.cancelAll("terminal closed");
+        save();
+    }
+
+    Set<ContainerKey> reachable() {
+        return reachable;
+    }
+
+    SortOrder sortOrder() {
+        return sortOrder;
+    }
+
+    void setSortOrder(SortOrder order) {
+        sortOrder = order;
+    }
+
+    ScanJob.Summary lastTerminalScan() {
+        return lastTerminalScan;
+    }
+
+    /** The running scan, if any; the terminal shows its progress. */
+    ScanJob runningScan() {
+        return currentScan();
+    }
+
+    private List<ContainerDiscovery.Target> refreshReachable(Minecraft minecraft) {
+        List<ContainerDiscovery.Target> targets = ContainerDiscovery.findInReach(minecraft.level, minecraft.player, config);
+        Set<ContainerKey> keys = new HashSet<>();
+        for (ContainerDiscovery.Target target : targets) {
+            keys.add(target.key());
+        }
+        reachable = Set.copyOf(keys);
+        return targets;
     }
 
     void cancelJobs(String reason) {

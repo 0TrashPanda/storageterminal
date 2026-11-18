@@ -46,6 +46,7 @@ final class ScanJob implements Job {
     private int ignored;
     private int unreachable;
     private boolean finished;
+    private boolean waitingForSneak;
 
     ScanJob(Minecraft minecraft, StorageCache cache, RateLimiter rateLimiter, Config config, boolean force,
             List<ContainerDiscovery.Target> targets, Consumer<Summary> onFinished, Runnable onSessionEndedWithoutMenu) {
@@ -76,6 +77,16 @@ final class ScanJob implements Job {
 
     int total() {
         return total;
+    }
+
+    /** True while the next open waits because the player is sneaking. */
+    boolean isWaitingForSneak() {
+        return waitingForSneak;
+    }
+
+    /** A screen that must stop the scan: anything except the terminal itself. */
+    private boolean blockingScreenOpen() {
+        return minecraft.gui.screen() != null && !(minecraft.gui.screen() instanceof TerminalScreen);
     }
 
     @Override
@@ -148,7 +159,8 @@ final class ScanJob implements Job {
                 continue;
             }
             // Wait (do not open) while a screen is up, the player sneaks, or the rate limit says no.
-            if (minecraft.gui.screen() != null || player.isSecondaryUseActive()) {
+            waitingForSneak = player.isSecondaryUseActive();
+            if (blockingScreenOpen() || waitingForSneak) {
                 return Status.RUNNING;
             }
             long tick = level.getGameTime();
@@ -183,7 +195,7 @@ final class ScanJob implements Job {
         if (hurt && config.abortOnDamage()) {
             return "took damage";
         }
-        if (minecraft.gui.screen() != null) {
+        if (blockingScreenOpen()) {
             if (opensStarted) {
                 return "a screen was opened";
             }

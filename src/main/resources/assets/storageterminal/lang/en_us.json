@@ -1,4 +1,5 @@
 {
   "key.category.storageterminal.main": "Storage Terminal",
+  "key.storageterminal.open_terminal": "Open storage terminal",
   "key.storageterminal.toggle_ignore": "Ignore/unignore container"
 }

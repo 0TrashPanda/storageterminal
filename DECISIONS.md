@@ -54,3 +54,18 @@ One line each: what, why. Newest at the bottom.
 - The generic `JobQueue` arrived in M1 instead of M3, because a scan is already a job.
 - `/storageterminal scan` always rescans (ignores `minRefreshIntervalMs`). `scan`, `dump` and `cache clear` are marked DEBUG; M5 decides which stay.
 - Tests: JUnit 5.11.4 for `core`; an in-game acceptance test (`src/gametest`, Fabric client gametest, `./gradlew runClientGameTest`) builds the M1 test room and checks it automatically.
+
+## M2 (2026-11-18)
+
+- Tooltip shows the item's own tooltip, the exact total ("1,180 stored"), the not-rescanned note and click hints. No per-container breakdown or positions: the user does not care which chest holds what (overrides SPEC section 8 and the mockup; SPEC updated).
+- Open-terminal key defaults to B. Vanilla 26.3 uses G for quick actions; B is free.
+- The terminal lists only containers in reach (found when it opens and after each refresh). Opening shows the cache at once, then refreshes in the background without forcing (containers refreshed in the last 30 s are skipped). The Scan button forces a full rescan.
+- Closing the terminal cancels the running scan and saves; the scan no longer aborts for the terminal screen itself, only for other screens.
+- Compact counts round down (1,180 shows as 1.1k), so the grid never shows more than there is. Exact count is in the tooltip.
+- "Recent" sort: each container remembers when each item's count last changed (new optional `changedAt` field in the cache file, still schema 1: older files without it load fine).
+- Sort order is remembered for the session only; saving it to the config file comes with the config in M5.
+- Grid rows shrink to fit small windows (6 max, 1 min). The panel and slots are drawn with plain fills in the vanilla colours, no textures.
+- Status line falls back to "N containers · M skipped" when the full text is too wide, with the breakdown on hover.
+- Deposit all is shown but disabled until M4; grid clicks do nothing until M3.
+- In 26.3 screens draw in `extractRenderState(GuiGraphicsExtractor, ...)`, mouse buttons are `InputConstants.MOUSE_BUTTON_LEFT` = 1 / RIGHT = 3, and input arrives as `MouseButtonEvent` / `KeyEvent`.
+- The in-game test now also checks the terminal (real B key, typing into search, `#c:ingots`, `@minecraft`, name sort, a small window, closing mid-scan with no container left open on client or server) and saves screenshots to `build/run/clientGameTest/screenshots/`.

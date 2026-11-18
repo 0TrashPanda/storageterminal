@@ -12,6 +12,7 @@ import java.util.Map;
 public final class StorageCache {
     private final Map<ContainerKey, ContainerRecord> records = new LinkedHashMap<>();
     private boolean dirty;
+    private int version;
 
     public ContainerRecord get(ContainerKey key) {
         return records.get(key);
@@ -30,7 +31,7 @@ public final class StorageCache {
             List<SlotStack> slots, long nowMillis, long gameTime) {
         ContainerRecord record = records.computeIfAbsent(key, k -> ContainerRecord.unseen(k, type, positions));
         record.applySnapshot(type, positions, slots, nowMillis, gameTime);
-        dirty = true;
+        touch();
         return record;
     }
 
@@ -40,7 +41,7 @@ public final class StorageCache {
         ContainerRecord record = records.computeIfAbsent(key, k -> ContainerRecord.unseen(k, type, positions));
         if (record.state() != state) {
             record.setState(state);
-            dirty = true;
+            touch();
         }
         return record;
     }
@@ -48,7 +49,7 @@ public final class StorageCache {
     /** Toggles a tag, creating the record if needed. Returns true if the tag is now set. */
     public boolean toggleTag(ContainerKey key, ContainerType type, List<BlockPosition> positions, ContainerTag tag) {
         ContainerRecord record = records.computeIfAbsent(key, k -> ContainerRecord.unseen(k, type, positions));
-        dirty = true;
+        touch();
         return record.toggleTag(tag);
     }
 
@@ -59,16 +60,27 @@ public final class StorageCache {
                 record.setState(ContainerState.STALE);
             }
         }
+        version++;
     }
 
     public void clear() {
         records.clear();
-        dirty = true;
+        touch();
     }
 
     /** Adds a record as is; used when reading from disk. */
     void putRecord(ContainerRecord record) {
         records.put(record.key(), record);
+    }
+
+    /** Increases on every change; lets the UI notice updates cheaply. */
+    public int version() {
+        return version;
+    }
+
+    private void touch() {
+        dirty = true;
+        version++;
     }
 
     public boolean isDirty() {

@@ -6,7 +6,9 @@ import dev.trashpanda.storageterminal.core.ContainerRecord;
 import dev.trashpanda.storageterminal.core.ContainerState;
 import dev.trashpanda.storageterminal.core.ContainerTag;
 import dev.trashpanda.storageterminal.core.StorageIndex;
+import dev.trashpanda.storageterminal.core.SortOrder;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
@@ -118,7 +120,110 @@ public final class ScanGameTest implements FabricClientGameTest {
                 ContainerRecord h = record(mc.level, at(3, 0, -1));
                 check(h != null && h.isIgnored(), "ignore tag survives a restart");
             });
+            terminalChecks(context, world);
         }
+    }
+
+    /** M2: the terminal opens from the cache, refreshes live, searches, sorts, and stops cleanly when closed. */
+    private void terminalChecks(ClientGameTestContext context, TestSingleplayerContext world) {
+        // Open with the real key; contents show at once from the (stale) cache.
+        context.getInput().pressKey(StorageTerminalClient.openTerminalKey());
+        context.waitForScreen(TerminalScreen.class);
+        context.runOnClient(mc -> {
+            TerminalScreen screen = (TerminalScreen) mc.gui.screen();
+            check(entryTotal(screen, "minecraft:iron_ingot") == 18, "terminal shows cached contents at once");
+        });
+        context.takeScreenshot("m2-terminal-opening");
+
+        // Background refresh finishes; nothing is stale any more and totals still match.
+        context.waitFor(mc -> StorageService.get().runningScan() == null, 600);
+        context.runOnClient(mc -> {
+            TerminalScreen screen = (TerminalScreen) mc.gui.screen();
+            check(screen.shownEntries().stream().noneMatch(StorageIndex.Entry::anyStale), "all rescanned");
+            check(entryTotal(screen, "minecraft:iron_ingot") == 18, "iron 18");
+            check(entryTotal(screen, "minecraft:gold_ingot") == 10, "gold 10");
+            check(entryTotal(screen, "minecraft:cobblestone") == 96, "cobblestone 96");
+            check(entryTotal(screen, "minecraft:diamond") == 4, "diamond 4");
+            check(entryTotal(screen, "minecraft:redstone") == 20, "redstone 20");
+            check(entryTotal(screen, "minecraft:dirt") == 64, "dirt 64");
+            check(entryTotal(screen, "minecraft:apple") == 0, "ignored chest not shown");
+            check(entryTotal(screen, "minecraft:emerald") == 0, "blocked chest not shown");
+            check(entryTotal(screen, "minecraft:string") == 0, "out-of-reach chest not shown");
+            check(screen.shownEntries().get(0).item().itemId().equals("minecraft:cobblestone"), "sorted by count");
+            check(screen.searchText().isEmpty(), "search starts empty");
+        });
+
+        // Hover an entry for a tooltip screenshot.
+        double scale = context.computeOnClient(mc -> mc.getWindow().getGuiScale());
+        int[] center = context.computeOnClient(mc -> ((TerminalScreen) mc.gui.screen()).gridSlotCenter(1));
+        context.getInput().setCursorPos(center[0] * scale, center[1] * scale);
+        context.waitTicks(3);
+        context.takeScreenshot("m2-terminal-tooltip");
+
+        // Search: typed into the focused search box.
+        context.getInput().typeChars("iron");
+        context.waitTicks(2);
+        context.runOnClient(mc -> {
+            TerminalScreen screen = (TerminalScreen) mc.gui.screen();
+            check(screen.searchText().equals("iron"), "typing goes to the search box, got: " + screen.searchText());
+            check(screen.shownEntries().size() == 1, "search iron finds 1 entry, got " + screen.shownEntries().size());
+            screen.setSearch("#c:ingots");
+            List<String> ids = screen.shownEntries().stream().map(e -> e.item().itemId()).toList();
+            check(ids.contains("minecraft:iron_ingot") && ids.contains("minecraft:gold_ingot") && ids.size() == 2,
+                    "#c:ingots finds iron and gold, got " + ids);
+            screen.setSearch("@minecraft");
+            check(screen.shownEntries().size() == 6, "@minecraft finds all 6");
+            screen.setSearch("diamon sword");
+        });
+        context.waitTicks(2);
+        context.takeScreenshot("m2-terminal-no-results");
+        context.runOnClient(mc -> {
+            TerminalScreen screen = (TerminalScreen) mc.gui.screen();
+            check(screen.shownEntries().isEmpty(), "no results");
+            screen.setSearch("");
+            StorageService.get().setSortOrder(SortOrder.NAME);
+            check(screen.shownEntries().get(0).item().itemId().equals("minecraft:cobblestone"), "name sort: Cobblestone first");
+            StorageService.get().setSortOrder(SortOrder.COUNT);
+        });
+
+        // Small window: fewer rows, still works.
+        context.getInput().resizeWindow(640, 360);
+        context.waitTicks(5);
+        context.takeScreenshot("m2-terminal-small-window");
+        context.getInput().resizeWindow(1280, 720);
+        context.waitTicks(5);
+
+        // Closing mid-scan leaves no container open, on the client or the server.
+        context.runOnClient(mc -> StorageService.get().startTerminalScan(mc, true));
+        context.waitFor(mc -> {
+            ScanJob scan = StorageService.get().runningScan();
+            return scan != null && scan.activeSession() != null;
+        }, 200);
+        context.runOnClient(mc -> mc.gui.setScreen(null));
+        AtomicBoolean containerScreen = new AtomicBoolean(false);
+        for (int i = 0; i < 40; i++) {
+            context.waitTick();
+            context.runOnClient(mc -> {
+                if (mc.gui.screen() instanceof ContainerScreen) {
+                    containerScreen.set(true);
+                }
+            });
+        }
+        check(!containerScreen.get(), "no container screen after closing mid-scan");
+        context.runOnClient(mc -> {
+            check(StorageService.get().runningScan() == null, "scan stopped");
+            check(mc.player.containerMenu == mc.player.inventoryMenu, "client has no container open");
+        });
+        boolean serverClean = world.getServer().computeOnServer(server -> {
+            var player = server.getPlayerList().getPlayers().get(0);
+            return player.containerMenu == player.inventoryMenu;
+        });
+        check(serverClean, "server has no container open for the player");
+    }
+
+    private static long entryTotal(TerminalScreen screen, String id) {
+        return screen.shownEntries().stream().filter(e -> e.item().itemId().equals(id))
+                .mapToLong(StorageIndex.Entry::total).sum();
     }
 
     private void buildRoom(TestSingleplayerContext world) {

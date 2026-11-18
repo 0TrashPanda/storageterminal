@@ -16,4 +16,14 @@ public interface StorageSource {
 
     /** False when the source must not be used (ignored, missing, unreachable). */
     boolean isUsable();
+
+    /** True if the contents come from an earlier session and have not been rescanned yet. */
+    default boolean isStale() {
+        return false;
+    }
+
+    /** When the count of {@code item} in this source last changed (epoch millis), or 0 if unknown. */
+    default long changedAt(ItemKey item) {
+        return 0L;
+    }
 }

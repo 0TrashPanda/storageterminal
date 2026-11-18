@@ -106,6 +106,17 @@ public final class CacheCodec {
             }
         }
         o.add("slots", slots);
+        JsonArray changed = new JsonArray();
+        for (java.util.Map.Entry<ItemKey, Long> e : record.changedAtMap().entrySet()) {
+            JsonObject c = new JsonObject();
+            c.addProperty("id", e.getKey().itemId());
+            if (e.getKey().hasComponents()) {
+                c.addProperty("components", e.getKey().components());
+            }
+            c.addProperty("at", e.getValue());
+            changed.add(c);
+        }
+        o.add("changedAt", changed);
         return o;
     }
 
@@ -131,8 +142,16 @@ public final class CacheCodec {
             }
         }
         ContainerState state = ContainerState.valueOf(o.get("state").getAsString());
+        java.util.Map<ItemKey, Long> changedAt = new java.util.LinkedHashMap<>();
+        if (o.has("changedAt")) {
+            for (JsonElement c : o.getAsJsonArray("changedAt")) {
+                JsonObject co = c.getAsJsonObject();
+                String components = co.has("components") ? co.get("components").getAsString() : "";
+                changedAt.put(new ItemKey(co.get("id").getAsString(), components), co.get("at").getAsLong());
+            }
+        }
         return new ContainerRecord(key, type, positions, slots, o.get("refreshedAtMillis").getAsLong(),
-                o.get("refreshedAtGameTime").getAsLong(), tags, state);
+                o.get("refreshedAtGameTime").getAsLong(), tags, state, changedAt);
     }
 
     private static JsonArray writePos(BlockPosition pos) {
