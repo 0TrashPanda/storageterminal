@@ -16,6 +16,7 @@ import net.fabricmc.fabric.api.client.gametest.v1.FabricClientGameTest;
 import net.fabricmc.fabric.api.client.gametest.v1.context.ClientGameTestContext;
 import net.fabricmc.fabric.api.client.gametest.v1.context.TestSingleplayerContext;
 import net.fabricmc.fabric.api.client.gametest.v1.world.TestWorldSave;
+import com.mojang.blaze3d.platform.InputConstants;
 import net.minecraft.client.gui.screens.ChatScreen;
 import net.minecraft.client.gui.screens.inventory.ContainerScreen;
 import net.minecraft.core.BlockPos;
@@ -121,7 +122,149 @@ public final class ScanGameTest implements FabricClientGameTest {
                 check(h != null && h.isIgnored(), "ignore tag survives a restart");
             });
             terminalChecks(context, world);
+            takeChecks(context, world);
         }
+    }
+
+    /**
+     * M3: taking items. Every check also counts the item on the server (all room containers, the
+     * player's inventory and cursor) before and after, so nothing can be lost or duplicated unseen.
+     */
+    private void takeChecks(ClientGameTestContext context, TestSingleplayerContext world) {
+        context.getInput().pressKey(StorageTerminalClient.openTerminalKey());
+        context.waitForScreen(TerminalScreen.class);
+        context.waitFor(mc -> StorageService.get().runningScan() == null, 600);
+
+        // Left click: one stack of iron = all 18, spread over chest A (10), double chest B (5), barrel D (3).
+        long ironTotal = serverCount(world, "minecraft:iron_ingot", false);
+        clickEntry(context, "minecraft:iron_ingot", InputConstants.MOUSE_BUTTON_LEFT, false);
+        context.takeScreenshot("m3-taking");
+        waitForTake(context);
+        check(serverCount(world, "minecraft:iron_ingot", true) == 18, "18 iron in the inventory, got "
+                + serverCount(world, "minecraft:iron_ingot", true));
+        check(serverCount(world, "minecraft:iron_ingot", false) == ironTotal, "iron neither lost nor duplicated");
+        expectFeedback(context, StorageService.FeedbackKind.SUCCESS);
+        context.takeScreenshot("m3-took-iron");
+
+        // Right click: half a stack of gold = 5 of 10 (A: 3, C: 7), so one stack is split.
+        long goldTotal = serverCount(world, "minecraft:gold_ingot", false);
+        clickEntry(context, "minecraft:gold_ingot", InputConstants.MOUSE_BUTTON_RIGHT, false);
+        waitForTake(context);
+        check(serverCount(world, "minecraft:gold_ingot", true) == 5, "5 gold in the inventory, got "
+                + serverCount(world, "minecraft:gold_ingot", true));
+        check(serverCount(world, "minecraft:gold_ingot", false) == goldTotal, "gold neither lost nor duplicated");
+
+        // Re-verify: someone empties half of double chest B after the scan. The cache still says 96.
+        world.getServer().runCommand("item replace block " + at(0, 0, 2).getX() + " " + at(0, 0, 2).getY() + " "
+                + at(0, 0, 2).getZ() + " container.0 with minecraft:air");
+        context.waitTicks(3);
+        clickEntry(context, "minecraft:cobblestone", InputConstants.MOUSE_BUTTON_LEFT, true);
+        waitForTake(context);
+        check(serverCount(world, "minecraft:cobblestone", true) == 32, "took the 32 that are really there, got "
+                + serverCount(world, "minecraft:cobblestone", true));
+        check(serverCount(world, "minecraft:cobblestone", false) == 32, "cobblestone neither lost nor duplicated");
+        expectFeedback(context, StorageService.FeedbackKind.PARTIAL);
+        context.takeScreenshot("m3-partial");
+        context.runOnClient(mc -> check(entryTotal((TerminalScreen) mc.gui.screen(), "minecraft:cobblestone") == 0,
+                "cache corrected after the take"));
+
+        // Full inventory: nothing moves, the player is told.
+        world.getServer().runCommand("give @a minecraft:stone 2112");
+        context.waitTicks(3);
+        clickEntry(context, "minecraft:diamond", InputConstants.MOUSE_BUTTON_LEFT, false);
+        context.waitTicks(3);
+        waitForTake(context);
+        check(serverCount(world, "minecraft:diamond", true) == 0, "no diamond taken into a full inventory");
+        check(serverCount(world, "minecraft:diamond", false) == 4, "diamonds all still there");
+        expectFeedback(context, StorageService.FeedbackKind.FAILED);
+        world.getServer().runCommand("clear @a minecraft:stone");
+        context.waitTicks(3);
+
+        // Closing the terminal right after a click: the take stops cleanly, nothing left open or on the cursor.
+        long redstoneTotal = serverCount(world, "minecraft:redstone", false);
+        clickEntry(context, "minecraft:redstone", InputConstants.MOUSE_BUTTON_LEFT, false);
+        context.runOnClient(mc -> mc.gui.setScreen(null));
+        context.waitTicks(40);
+        context.runOnClient(mc -> {
+            check(StorageService.get().runningTake() == null, "take stopped");
+            check(mc.player.containerMenu == mc.player.inventoryMenu, "client has no container open");
+            check(mc.player.containerMenu.getCarried().isEmpty(), "client cursor empty");
+            check(!(mc.gui.screen() instanceof ContainerScreen), "no container screen");
+        });
+        boolean serverClean = world.getServer().computeOnServer(server -> {
+            var player = server.getPlayerList().getPlayers().get(0);
+            return player.containerMenu == player.inventoryMenu && player.containerMenu.getCarried().isEmpty();
+        });
+        check(serverClean, "server: no container open, cursor empty");
+        check(serverCount(world, "minecraft:redstone", false) == redstoneTotal, "redstone neither lost nor duplicated");
+    }
+
+    private void clickEntry(ClientGameTestContext context, String itemId, int button, boolean shift) {
+        int index = context.computeOnClient(mc -> {
+            List<StorageIndex.Entry> shown = ((TerminalScreen) mc.gui.screen()).shownEntries();
+            for (int i = 0; i < shown.size(); i++) {
+                if (shown.get(i).item().itemId().equals(itemId)) {
+                    return i;
+                }
+            }
+            return -1;
+        });
+        check(index >= 0, itemId + " is shown in the terminal");
+        double scale = context.computeOnClient(mc -> mc.getWindow().getGuiScale());
+        int[] center = context.computeOnClient(mc -> ((TerminalScreen) mc.gui.screen()).gridSlotCenter(index));
+        context.getInput().setCursorPos(center[0] * scale, center[1] * scale);
+        context.waitTick();
+        if (shift) {
+            context.getInput().holdShift();
+        }
+        context.getInput().pressMouse(button);
+        if (shift) {
+            context.getInput().releaseShift();
+        }
+        context.waitTick();
+    }
+
+    private static void waitForTake(ClientGameTestContext context) {
+        context.waitFor(mc -> StorageService.get().runningTake() == null, 400);
+        context.waitTicks(5);
+    }
+
+    private static void expectFeedback(ClientGameTestContext context, StorageService.FeedbackKind kind) {
+        context.runOnClient(mc -> {
+            StorageService.Feedback feedback = StorageService.get().feedback();
+            check(feedback != null && feedback.kind() == kind,
+                    "expected " + kind + " feedback, got " + (feedback == null ? "none" : feedback.kind() + ": " + feedback.text()));
+        });
+    }
+
+    /** Server truth: the item in all room containers plus the player (inventory and cursor), or the player only. */
+    private long serverCount(TestSingleplayerContext world, String itemId, boolean playerOnly) {
+        int[][] room = {{2, 0, 0}, {0, 0, 2}, {1, 0, 2}, {-2, 0, 0}, {-2, 0, 2}, {2, 0, 2}, {0, 0, -2}, {-1, 0, -3},
+                {3, 0, -1}, {8, 0, 0}};
+        return world.getServer().computeOnServer(server -> {
+            var player = server.getPlayerList().getPlayers().get(0);
+            long n = 0;
+            if (!playerOnly) {
+                var level = server.overworld();
+                for (int[] d : room) {
+                    if (level.getBlockEntity(at(d[0], d[1], d[2])) instanceof net.minecraft.world.Container c) {
+                        for (int i = 0; i < c.getContainerSize(); i++) {
+                            n += countIf(c.getItem(i), itemId);
+                        }
+                    }
+                }
+                n += countIf(player.containerMenu.getCarried(), itemId);
+            }
+            for (int i = 0; i < player.getInventory().getContainerSize(); i++) {
+                n += countIf(player.getInventory().getItem(i), itemId);
+            }
+            return n;
+        });
+    }
+
+    private static long countIf(net.minecraft.world.item.ItemStack stack, String itemId) {
+        return !stack.isEmpty() && net.minecraft.core.registries.BuiltInRegistries.ITEM.getKey(stack.getItem())
+                .toString().equals(itemId) ? stack.getCount() : 0;
     }
 
     /** M2: the terminal opens from the cache, refreshes live, searches, sorts, and stops cleanly when closed. */

@@ -12,7 +12,6 @@ import java.util.Deque;
 import java.util.List;
 import java.util.function.Consumer;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.player.LocalPlayer;
 
 /**
@@ -25,8 +24,6 @@ final class ScanJob implements Job {
     record Summary(int refreshed, int skippedRecent, int ignored, int unreachable, long millis, String abortReason) {
     }
 
-    private static final long WAIT_FOR_SCREEN_MS = 3000L;
-
     private final Minecraft minecraft;
     private final StorageCache cache;
     private final RateLimiter rateLimiter;
@@ -37,9 +34,7 @@ final class ScanJob implements Job {
     private final Deque<ContainerDiscovery.Target> remaining;
     private final int total;
     private final long startedAtMs = System.currentTimeMillis();
-    private ClientLevel level;
-    private float lastHealth;
-    private boolean opensStarted;
+    private final JobGuard guard;
     private ContainerSession session;
     private int refreshed;
     private int skippedRecent;
@@ -59,6 +54,7 @@ final class ScanJob implements Job {
         this.remaining = new ArrayDeque<>(targets);
         this.total = targets.size();
         this.onFinished = onFinished;
+        this.guard = new JobGuard(minecraft, config);
     }
 
     @Override
@@ -84,19 +80,11 @@ final class ScanJob implements Job {
         return waitingForSneak;
     }
 
-    /** A screen that must stop the scan: anything except the terminal itself. */
-    private boolean blockingScreenOpen() {
-        return minecraft.gui.screen() != null && !(minecraft.gui.screen() instanceof TerminalScreen);
-    }
 
     @Override
     public Status tick() {
         LocalPlayer player = minecraft.player;
-        if (level == null) {
-            level = minecraft.level;
-            lastHealth = player == null ? 0 : player.getHealth();
-        }
-        String abort = abortReason(player);
+        String abort = guard.check();
         if (abort != null) {
             cancel(abort);
             return Status.CANCELLED;
@@ -111,7 +99,7 @@ final class ScanJob implements Job {
                 case DONE -> {
                     ContainerDiscovery.Target t = session.target();
                     cache.putSnapshot(t.key(), t.found().type(), t.found().positions(), session.snapshot(),
-                            System.currentTimeMillis(), level.getGameTime());
+                            System.currentTimeMillis(), guard.level().getGameTime());
                     refreshed++;
                     session = null;
                 }
@@ -145,11 +133,11 @@ final class ScanJob implements Job {
                 remaining.removeFirst();
                 continue;
             }
-            if (ContainerBlocks.identify(level, next.openPos()) == null) {
+            if (ContainerBlocks.identify(guard.level(), next.openPos()) == null) {
                 remaining.removeFirst();
                 continue;
             }
-            if (ContainerBlocks.blockedReason(level, next.found()) != null) {
+            if (ContainerBlocks.blockedReason(guard.level(), next.found()) != null) {
                 markUnreachable(next);
                 remaining.removeFirst();
                 continue;
@@ -160,10 +148,10 @@ final class ScanJob implements Job {
             }
             // Wait (do not open) while a screen is up, the player sneaks, or the rate limit says no.
             waitingForSneak = player.isSecondaryUseActive();
-            if (blockingScreenOpen() || waitingForSneak) {
+            if (guard.blockingScreenOpen() || waitingForSneak) {
                 return Status.RUNNING;
             }
-            long tick = level.getGameTime();
+            long tick = guard.level().getGameTime();
             long now = System.currentTimeMillis();
             if (!rateLimiter.canOpen(tick, now)) {
                 return Status.RUNNING;
@@ -171,7 +159,7 @@ final class ScanJob implements Job {
             remaining.removeFirst();
             rateLimiter.recordOpen(tick, now);
             session = new ContainerSession(next, config.syncTimeoutMs());
-            opensStarted = true;
+            guard.markOpened();
             session.start(minecraft);
             return Status.RUNNING;
         }
@@ -179,32 +167,6 @@ final class ScanJob implements Job {
         return Status.DONE;
     }
 
-    private String abortReason(LocalPlayer player) {
-        if (player == null || minecraft.level == null) {
-            return "disconnected";
-        }
-        if (minecraft.level != level) {
-            return "changed dimension";
-        }
-        if (player.isDeadOrDying()) {
-            return "died";
-        }
-        float health = player.getHealth();
-        boolean hurt = health < lastHealth;
-        lastHealth = health;
-        if (hurt && config.abortOnDamage()) {
-            return "took damage";
-        }
-        if (blockingScreenOpen()) {
-            if (opensStarted) {
-                return "a screen was opened";
-            }
-            if (System.currentTimeMillis() - startedAtMs > WAIT_FOR_SCREEN_MS) {
-                return "a screen is open";
-            }
-        }
-        return null;
-    }
 
     private void markUnreachable(ContainerDiscovery.Target target) {
         cache.setState(target.key(), target.found().type(), target.found().positions(), ContainerState.UNREACHABLE);

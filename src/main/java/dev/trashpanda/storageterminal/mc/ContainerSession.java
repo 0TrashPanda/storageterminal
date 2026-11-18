@@ -15,7 +15,9 @@ import net.minecraft.world.inventory.MenuType;
 
 /**
  * Opens one container without showing its screen, waits for the content sync, copies the
- * slots and closes it again (SPEC section 7: OPENING, AWAIT_SYNC, SNAPSHOT, CLOSING).
+ * slots and closes it again (SPEC section 7: OPENING, AWAIT_SYNC, SNAPSHOT or OPERATE, CLOSING).
+ * With an {@link Operator}, the operator runs on the open menu (one call per tick) before the
+ * final snapshot; anything left on the cursor is put back before the container is closed.
  * The cooldown between sessions is handled by the caller's rate limiter.
  */
 final class ContainerSession {
@@ -26,8 +28,19 @@ final class ContainerSession {
         FAILED
     }
 
+    /** Work done inside an open container (take, put). */
+    interface Operator {
+        /** Called once per tick while the menu is open and synced. Returns true when finished. */
+        boolean tick(Minecraft minecraft, AbstractContainerMenu menu);
+
+        /** Called before closing early: must leave the cursor empty (items back in a slot). */
+        void cleanup(Minecraft minecraft, AbstractContainerMenu menu);
+    }
+
     private final ContainerDiscovery.Target target;
     private final long timeoutMs;
+    private final Operator operator;
+    private boolean operatorDone;
     private Phase phase = Phase.NOT_STARTED;
     private long startedAtMs;
     private AbstractContainerMenu menu;
@@ -38,8 +51,13 @@ final class ContainerSession {
     private String failure;
 
     ContainerSession(ContainerDiscovery.Target target, long timeoutMs) {
+        this(target, timeoutMs, null);
+    }
+
+    ContainerSession(ContainerDiscovery.Target target, long timeoutMs, Operator operator) {
         this.target = target;
         this.timeoutMs = timeoutMs;
+        this.operator = operator;
     }
 
     ContainerDiscovery.Target target() {
@@ -117,6 +135,15 @@ final class ContainerSession {
             return;
         }
         if (synced) {
+            if (operator != null && !operatorDone) {
+                operatorDone = operator.tick(minecraft, menu);
+                if (!operatorDone) {
+                    return;
+                }
+            }
+            if (!menu.getCarried().isEmpty() && operator != null) {
+                operator.cleanup(minecraft, menu);
+            }
             snapshot = copySlots(minecraft);
             close(minecraft);
             phase = Phase.DONE;
@@ -132,6 +159,9 @@ final class ContainerSession {
     void abort(Minecraft minecraft, String reason) {
         if (phase == Phase.DONE || phase == Phase.FAILED) {
             return;
+        }
+        if (menu != null && operator != null && synced) {
+            operator.cleanup(minecraft, menu);
         }
         close(minecraft);
         fail(reason);

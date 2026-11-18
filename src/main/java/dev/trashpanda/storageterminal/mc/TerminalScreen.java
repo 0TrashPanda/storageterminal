@@ -10,6 +10,7 @@ import dev.trashpanda.storageterminal.core.ItemKey;
 import dev.trashpanda.storageterminal.core.SortOrder;
 import dev.trashpanda.storageterminal.core.StorageCache;
 import dev.trashpanda.storageterminal.core.StorageIndex;
+import dev.trashpanda.storageterminal.core.TakePlanner;
 import dev.trashpanda.storageterminal.core.TerminalList;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -30,7 +31,7 @@ import net.minecraft.world.item.ItemStack;
 /**
  * The storage terminal (SPEC section 8, layout A from the approved mockups): search, sort and
  * rescan on top, then a status line, the aggregated item grid with a scrollbar, and the player's
- * inventory (display only in M2). Read-only in M2: clicking grid entries does nothing yet.
+ * inventory. Clicking a grid entry takes items (M3); the inventory panel is display only until M4.
  *
  * <p>Controls are placed by {@link #layout()} only, so they can move to a sidebar (layout B)
  * later without touching the rest.
@@ -72,6 +73,7 @@ public final class TerminalScreen extends Screen {
     private Button sortButton;
     private Button rescanButton;
     private Button depositAllButton;
+    private Button cancelButton;
 
     private int left;
     private int top;
@@ -114,11 +116,15 @@ public final class TerminalScreen extends Screen {
         depositAllButton = Button.builder(Component.literal("Deposit all"), b -> {
         }).bounds(0, 0, 62, 14).build();
         depositAllButton.active = false; // M4
+        cancelButton = Button.builder(Component.literal("Cancel"), b -> service.cancelJobs("cancelled"))
+                .bounds(0, 0, 40, 12).build();
+        cancelButton.visible = false;
         layout();
         addRenderableWidget(search);
         addRenderableWidget(sortButton);
         addRenderableWidget(rescanButton);
         addRenderableWidget(depositAllButton);
+        addRenderableWidget(cancelButton);
         setInitialFocus(search);
     }
 
@@ -135,6 +141,7 @@ public final class TerminalScreen extends Screen {
         gridY = top + 45;
         invY = gridY + rows * SLOT + 5 + 12;
         depositAllButton.setPosition(left + PAD + COLUMNS * SLOT - 62, invY - 16);
+        cancelButton.setPosition(left + PANEL_W - PAD - 40, top + 31);
     }
 
     @Override
@@ -206,6 +213,7 @@ public final class TerminalScreen extends Screen {
         refreshEntries();
         drawPanel(g, left, top, PANEL_W, FIXED_H + rows * SLOT);
         g.text(font, title, left + PAD, top + 6, TEXT, false);
+        cancelButton.visible = service.runningTake() != null;
         drawStatus(g);
         drawGrid(g);
         drawScrollbar(g);
@@ -223,6 +231,7 @@ public final class TerminalScreen extends Screen {
             g.fill(x + 1, y + 1, x + SLOT - 1, y + SLOT - 1, 0x80FFFFFF);
         }
         drawStaleMarkers(g);
+        drawBusy(g);
         if (hovered != null) {
             ItemStack stack = stackFor(hovered.item());
             g.setTooltipForNextFrame(font, tooltipFor(hovered, stack), stack.getTooltipImage(), mouseX, mouseY);
@@ -240,6 +249,27 @@ public final class TerminalScreen extends Screen {
     private void drawStatus(GuiGraphicsExtractor g) {
         int x = left + PAD;
         int y = top + 34;
+        statusDetail = null;
+        TakeJob take = service.runningTake();
+        if (take != null) {
+            String where = take.stopCount() > 1 ? " (" + Math.max(1, take.currentStop()) + "/" + take.stopCount() + ")" : "";
+            String text = "Taking " + CountFormat.exact(take.wanted()) + " " + take.itemName() + where;
+            g.text(font, clip(text, STATUS_W - 44), x, y, TEXT, false);
+            if (font.width(text) > STATUS_W - 44) {
+                statusDetail = List.of(Component.literal(text));
+            }
+            return;
+        }
+        StorageService.Feedback feedback = service.feedback();
+        if (feedback != null) {
+            drawFeedbackIcon(g, x, y, feedback.kind());
+            String text = feedback.text();
+            g.text(font, clip(text, STATUS_W - 12), x + 12, y, TEXT, false);
+            if (font.width(text) > STATUS_W - 12) {
+                statusDetail = List.of(Component.literal(text));
+            }
+            return;
+        }
         ScanJob scan = service.runningScan();
         if (scan != null) {
             if (scan.isWaitingForSneak()) {
@@ -257,7 +287,8 @@ public final class TerminalScreen extends Screen {
             return;
         }
         ScanJob.Summary last = service.lastTerminalScan();
-        if (last != null && last.abortReason() != null && !"terminal closed".equals(last.abortReason())) {
+        if (last != null && last.abortReason() != null && !"terminal closed".equals(last.abortReason())
+                && !"take".equals(last.abortReason())) {
             g.text(font, clip("Scan stopped: " + last.abortReason(), STATUS_W), x, y, TEXT, false);
             return;
         }
@@ -297,7 +328,6 @@ public final class TerminalScreen extends Screen {
             full.append(" · ").append(ignored).append(" ignored");
         }
         String text = full.toString();
-        statusDetail = null;
         if (font.width(text) > STATUS_W) {
             // Too long for the panel: short form, full breakdown on hover.
             text = containers + " · " + (unreachable + ignored) + " skipped";
@@ -323,6 +353,52 @@ public final class TerminalScreen extends Screen {
                     g.item(stack, x + 1, y + 1);
                     g.itemDecorations(font, stack, x + 1, y + 1,
                             entry.total() == 1 ? "" : CountFormat.compact(entry.total()));
+                }
+            }
+        }
+    }
+
+    /** Entries of a running take are dimmed until it finishes. */
+    private void drawBusy(GuiGraphicsExtractor g) {
+        TakeJob take = service.runningTake();
+        if (take == null) {
+            return;
+        }
+        int first = scrollRow * COLUMNS;
+        for (int i = 0; i < rows * COLUMNS && first + i < shown.size(); i++) {
+            if (shown.get(first + i).item().equals(take.item())) {
+                int x = gridX + (i % COLUMNS) * SLOT;
+                int y = gridY + (i / COLUMNS) * SLOT;
+                g.fill(x + 1, y + 1, x + SLOT - 1, y + SLOT - 1, 0xA08B8B8B);
+            }
+        }
+    }
+
+    /** Green check, amber "!", red cross: told apart by shape as well as colour. */
+    private void drawFeedbackIcon(GuiGraphicsExtractor g, int x, int y, StorageService.FeedbackKind kind) {
+        int colour = switch (kind) {
+            case SUCCESS -> 0xFF2F7D32;
+            case PARTIAL -> 0xFFB36B00;
+            case FAILED -> 0xFFB3261E;
+        };
+        g.fill(x, y - 1, x + 9, y + 8, colour);
+        int w = 0xFFFFFFFF;
+        switch (kind) {
+            case SUCCESS -> {
+                g.fill(x + 2, y + 3, x + 3, y + 5, w);
+                g.fill(x + 3, y + 4, x + 4, y + 6, w);
+                g.fill(x + 4, y + 3, x + 5, y + 5, w);
+                g.fill(x + 5, y + 2, x + 6, y + 4, w);
+                g.fill(x + 6, y + 1, x + 7, y + 3, w);
+            }
+            case PARTIAL -> {
+                g.fill(x + 4, y + 1, x + 5, y + 4, w);
+                g.fill(x + 4, y + 5, x + 5, y + 6, w);
+            }
+            case FAILED -> {
+                for (int i = 0; i < 5; i++) {
+                    g.fill(x + 2 + i, y + 1 + i, x + 3 + i, y + 2 + i, w);
+                    g.fill(x + 6 - i, y + 1 + i, x + 7 - i, y + 2 + i, w);
                 }
             }
         }
@@ -464,7 +540,19 @@ public final class TerminalScreen extends Screen {
             return true;
         }
         if (gridSlotAt((int) event.x(), (int) event.y()) >= 0) {
-            return true; // Take arrives in M3.
+            StorageIndex.Entry entry = entryAt((int) event.x(), (int) event.y());
+            if (entry != null) {
+                TakePlanner.Mode mode;
+                if (event.button() == InputConstants.MOUSE_BUTTON_RIGHT) {
+                    mode = TakePlanner.Mode.HALF;
+                } else if (event.button() == InputConstants.MOUSE_BUTTON_LEFT) {
+                    mode = event.hasShiftDown() || minecraft.hasShiftDown() ? TakePlanner.Mode.FILL : TakePlanner.Mode.STACK;
+                } else {
+                    return true;
+                }
+                service.startTake(minecraft, entry.item(), mode);
+            }
+            return true;
         }
         return super.mouseClicked(event, doubleClick);
     }

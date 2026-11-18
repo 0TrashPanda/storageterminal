@@ -4,6 +4,9 @@ package dev.trashpanda.storageterminal.mc;
 import dev.trashpanda.storageterminal.StorageTerminal;
 import dev.trashpanda.storageterminal.core.Config;
 import dev.trashpanda.storageterminal.core.ContainerKey;
+import dev.trashpanda.storageterminal.core.ContainerRecord;
+import dev.trashpanda.storageterminal.core.CountFormat;
+import dev.trashpanda.storageterminal.core.ItemKey;
 import dev.trashpanda.storageterminal.core.ContainerTag;
 import dev.trashpanda.storageterminal.core.Job;
 import dev.trashpanda.storageterminal.core.JobQueue;
@@ -11,6 +14,7 @@ import dev.trashpanda.storageterminal.core.RateLimiter;
 import dev.trashpanda.storageterminal.core.SlotStack;
 import dev.trashpanda.storageterminal.core.SortOrder;
 import dev.trashpanda.storageterminal.core.StorageCache;
+import dev.trashpanda.storageterminal.core.TakePlanner;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -20,9 +24,11 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientPacketListener;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
+import net.minecraft.network.chat.Component;
 import net.minecraft.network.protocol.game.ServerboundContainerClosePacket;
 import net.minecraft.world.inventory.AbstractContainerMenu;
 import net.minecraft.world.inventory.MenuType;
+import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
 
@@ -57,6 +63,19 @@ public final class StorageService {
     private SortOrder sortOrder = SortOrder.parse(config.defaultSort());
     private Set<ContainerKey> reachable = Set.of();
     private ScanJob.Summary lastTerminalScan;
+
+    /** Result of the last take/put, shown in the terminal's status line for a few seconds. */
+    enum FeedbackKind {
+        SUCCESS,
+        PARTIAL,
+        FAILED
+    }
+
+    record Feedback(FeedbackKind kind, String text, long atMillis) {
+    }
+
+    private static final long FEEDBACK_MS = 5000L;
+    private Feedback feedback;
 
     private StorageService() {
     }
@@ -171,6 +190,95 @@ public final class StorageService {
                 refreshReachable(minecraft);
             }
         }, this::armLateOpenGuard));
+    }
+
+    /** Starts taking {@code item} for a grid click. Problems are reported through {@link #feedback()}. */
+    void startTake(Minecraft minecraft, ItemKey item, TakePlanner.Mode mode) {
+        LocalPlayer player = minecraft.player;
+        if (player == null || minecraft.level == null) {
+            return;
+        }
+        if (runningTake() != null) {
+            showFeedback(minecraft, FeedbackKind.FAILED, "Busy: wait for the current take to finish");
+            return;
+        }
+        if (player.isSecondaryUseActive()) {
+            showFeedback(minecraft, FeedbackKind.FAILED, "Stop sneaking to take items");
+            return;
+        }
+        ItemStack reference = ItemKeys.toStack(item, 1, minecraft.level.registryAccess());
+        if (reference.isEmpty()) {
+            showFeedback(minecraft, FeedbackKind.FAILED, "Unknown item " + item.itemId());
+            return;
+        }
+        int maxStack = reference.getMaxStackSize();
+        List<SlotStack> inventory = new ArrayList<>(36);
+        for (int i = 0; i < 36; i++) {
+            ItemStack stack = player.getInventory().getItem(i);
+            inventory.add(stack.isEmpty() ? SlotStack.EMPTY
+                    : ItemStack.isSameItemSameComponents(stack, reference) ? new SlotStack(item, stack.getCount())
+                    : new SlotStack(ItemKey.of("storageterminal:other"), stack.getCount()));
+        }
+        int room = TakePlanner.inventoryRoom(item, maxStack, inventory);
+
+        // Containers in reach that (per the cache) hold the item, nearest first.
+        jobs.cancelAll("take");
+        List<ContainerDiscovery.Target> stops = new ArrayList<>();
+        long stored = 0;
+        for (ContainerDiscovery.Target target : refreshReachable(minecraft)) {
+            ContainerRecord record = cache.get(target.key());
+            if (record == null || !record.isUsable()) {
+                continue;
+            }
+            long here = record.slots().stream().filter(s -> !s.isEmpty() && s.item().equals(item))
+                    .mapToLong(SlotStack::count).sum();
+            if (here > 0) {
+                stops.add(target);
+                stored += here;
+            }
+        }
+        String name = reference.getHoverName().getString();
+        if (stored == 0) {
+            showFeedback(minecraft, FeedbackKind.FAILED, "No " + name + " in reach");
+            return;
+        }
+        long amount = TakePlanner.amountToTake(mode, stored, maxStack, room);
+        if (amount <= 0) {
+            showFeedback(minecraft, FeedbackKind.FAILED, "Inventory full");
+            return;
+        }
+        jobs.enqueue(new TakeJob(minecraft, cache, rateLimiter, config, item, reference, amount, stops,
+                result -> onTakeFinished(minecraft, result), this::armLateOpenGuard));
+    }
+
+    private void onTakeFinished(Minecraft minecraft, TakeJob.Result result) {
+        save();
+        String took = "Took " + CountFormat.exact(result.moved());
+        if (result.problem() == null) {
+            showFeedback(minecraft, FeedbackKind.SUCCESS, took + " " + result.itemName());
+        } else if (result.moved() > 0) {
+            showFeedback(minecraft, FeedbackKind.PARTIAL, took + " of " + CountFormat.exact(result.wanted()) + " "
+                    + result.itemName() + ": " + result.problem());
+        } else {
+            showFeedback(minecraft, FeedbackKind.FAILED, "Took no " + result.itemName() + ": " + result.problem());
+        }
+    }
+
+    void showFeedback(Minecraft minecraft, FeedbackKind kind, String text) {
+        feedback = new Feedback(kind, text, System.currentTimeMillis());
+        StorageTerminal.LOGGER.info("[{}] {}", kind, text);
+        if (minecraft.player != null && !(minecraft.gui.screen() instanceof TerminalScreen)) {
+            minecraft.player.sendOverlayMessage(Component.literal(text));
+        }
+    }
+
+    /** The latest take/put result while it is recent, else null. */
+    Feedback feedback() {
+        return feedback != null && System.currentTimeMillis() - feedback.atMillis() < FEEDBACK_MS ? feedback : null;
+    }
+
+    TakeJob runningTake() {
+        return jobs.current() instanceof TakeJob take ? take : null;
     }
 
     /** The terminal closed: stop all work cleanly and save. */
@@ -304,9 +412,9 @@ public final class StorageService {
     }
 
     public void onContentSynced(int containerId) {
-        ScanJob scan = currentScan();
-        if (scan != null && scan.activeSession() != null) {
-            scan.activeSession().onContentSynced(containerId);
+        ContainerSession session = activeSession();
+        if (session != null) {
+            session.onContentSynced(containerId);
         }
         if (passiveMenu != null && passiveMenu.containerId == containerId) {
             capturePassive();
@@ -315,20 +423,26 @@ public final class StorageService {
 
     /** Returns true if the closed menu was ours, so vanilla must not close the current screen. */
     public boolean onServerClosedMenu(Minecraft minecraft, int containerId) {
-        ScanJob scan = currentScan();
-        return scan != null && scan.activeSession() != null
-                && scan.activeSession().onServerClosed(minecraft, containerId);
+        ContainerSession session = activeSession();
+        return session != null && session.onServerClosed(minecraft, containerId);
     }
 
     // ---- internals -------------------------------------------------------------------
 
     private ContainerSession activeSessionWaiting() {
-        ScanJob scan = currentScan();
-        if (scan == null || scan.activeSession() == null) {
-            return null;
+        ContainerSession session = activeSession();
+        return session != null && session.isWaitingForMenu() ? session : null;
+    }
+
+    /** The container session of the running job (scan or take), if any. */
+    ContainerSession activeSession() {
+        if (jobs.current() instanceof ScanJob scan) {
+            return scan.activeSession();
         }
-        ContainerSession session = scan.activeSession();
-        return session.isWaitingForMenu() ? session : null;
+        if (jobs.current() instanceof TakeJob take) {
+            return take.activeSession();
+        }
+        return null;
     }
 
     private ScanJob currentScan() {

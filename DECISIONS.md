@@ -69,3 +69,17 @@ One line each: what, why. Newest at the bottom.
 - Deposit all is shown but disabled until M4; grid clicks do nothing until M3.
 - In 26.3 screens draw in `extractRenderState(GuiGraphicsExtractor, ...)`, mouse buttons are `InputConstants.MOUSE_BUTTON_LEFT` = 1 / RIGHT = 3, and input arrives as `MouseButtonEvent` / `KeyEvent`.
 - The in-game test now also checks the terminal (real B key, typing into search, `#c:ingots`, `@minecraft`, name sort, a small window, closing mid-scan with no container left open on client or server) and saves screenshots to `build/run/clientGameTest/screenshots/`.
+
+## M3 (2026-11-18)
+
+- Clicks: left = one stack (or all if less), right = half a stack rounded up (`ceil(min(maxStack, stored) / 2)`), shift + left = as much as fits. Shift is read from the click event or, as a fallback, from the keyboard state.
+- 26.3 names: `ClickType` is now `ContainerInput`, and the click call is `MultiPlayerGameMode.handleContainerInput(containerId, slot, button, input, player)`; it applies the click on the client and sends the changed slots.
+- Whole stacks move with shift-click (QUICK_MOVE), so items land where vanilla puts them (hotbar first). Part of a stack goes through the cursor: right-click picks up exactly half when that is the amount, otherwise pick up all and drop/return one at a time, whichever needs fewer clicks; then the cursor is emptied.
+- At most 6 clicks per tick, so a take looks like a fast player rather than a burst.
+- The result is measured: the item count in the inventory after the job minus before, never the planned amount. Each container's contents are read back after waiting 2 ticks plus the player's ping, and stored in the cache.
+- Re-verify: slots are chosen from each container's fresh contents when it opens; if it holds less than the cache said, the rest is taken from the next container. The planner from cached data decides only which containers to visit, nearest first.
+- Cursor safety: before a container closes (normally or on abort), anything on the cursor is put back: into the slot it came from, else an inventory slot that takes it whole, else a free container slot. Never dropped.
+- A click on an entry cancels a running background scan; a second click while a take runs is refused with a message.
+- Feedback (success / partial / failed, with a check, "!" or cross icon) shows in the status line for 5 s, or in the action bar when the terminal is closed. Status during a take: "Taking 18 Iron Ingot (1/3)" with a Cancel button; the item's entry is dimmed.
+- Abort checks moved into a shared `JobGuard` used by scan and take.
+- In-game test for M3: one stack from three containers, half a stack that splits a stack, a shift-click on a chest emptied after the scan (takes only what is really there), a full inventory, and closing the terminal right after a click. Each check counts the item on the server (containers, inventory, cursor) before and after.
