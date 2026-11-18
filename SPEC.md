@@ -210,6 +210,15 @@ Execution mirrors Take: open, await sync, re-verify free space, move the stack w
 
 Hooks to leave now: extensible string-based tags, `StorageSource` abstraction, generic `JobQueue`, `ItemKey` that includes components, a version field in the cache schema.
 
+## 12b. Interaction improvements (after v1, do NOT implement yet)
+
+Feedback from the first manual play test (2026-11-18): the terminal's clicks work but feel limited. **Before designing any of this, compare how Refined Storage and AE2 handle each point** (their grid/terminal controls, modifier keys, what feels natural to players used to them) and write the chosen design here. Then decide with the user.
+
+- **Shift-drag.** Hold shift and drag the mouse over several stacks to move them all, like vanilla's shift-drag in inventories: over inventory stacks to store each one, and possibly over grid entries to take a stack of each.
+- **Mouse-wheel moves (Item Scroller style).** Scrolling over an entry or an inventory stack moves items one at a time (or a stack at a time with a modifier), the way the Item Scroller mod works in vanilla screens. Must not clash with scrolling the grid: decide which wins where, and check compatibility when Item Scroller itself is installed.
+- **Take exactly 1 item.** A click to take a single item (which button or modifier: see how RS/AE2 do it, e.g. a modifier + click, middle click, or the scroll wheel above).
+- **Move into an open container at an exact slot.** When the player opens a container or workstation themselves (normal block interaction, e.g. a chest, furnace or crafting table), let them pull items from storage straight into a chosen slot of that open screen, instead of only into the inventory. Needs: a way to pick the item (terminal side panel or search overlay on the vanilla screen), and the move itself (fetch into the inventory from storage, then place into the slot). Hard part: only one container menu can be open at a time (section 3b), so fetching from other containers means the player's open screen has to close and reopen (or the fetch happens before opening). *To confirm with the user that this is what is meant.*
+
 ## 13. Config (JSON, every key commented in the README)
 
 `reachMargin` (0.25), `openCooldownTicks`, `maxOpensPerSecond`, `syncTimeoutMs` (1000), `minRefreshIntervalMs`, `includeTrappedChests` (true), `abortOnDamage` (true), `depositIncludesHotbar` (false), `defaultSort`, `showRememberedOutOfReach` (false), `debugLogging` (false). Missing/invalid keys fall back to defaults; never crash on a bad config.
