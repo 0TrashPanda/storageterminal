@@ -24,6 +24,9 @@ public final class MultiplayerGameTest implements FabricClientGameTest {
 
     @Override
     public void runTest(ClientGameTestContext context) {
+        if (TestWorldMaker.requested()) {
+            return; // Only making the manual test world this run.
+        }
         try (TestDedicatedServerContext server = context.worldBuilder().createServer();
                 TestDedicatedServerConnection connection = server.connect()) {
             server.runCommand("difficulty peaceful");

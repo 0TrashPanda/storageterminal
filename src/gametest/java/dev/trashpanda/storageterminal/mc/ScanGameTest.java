@@ -34,6 +34,9 @@ public final class ScanGameTest implements FabricClientGameTest {
 
     @Override
     public void runTest(ClientGameTestContext context) {
+        if (TestWorldMaker.requested()) {
+            return; // Only making the manual test world this run.
+        }
         TestWorldSave save;
         try (TestSingleplayerContext world = context.worldBuilder().create()) {
             save = world.getWorldSave();

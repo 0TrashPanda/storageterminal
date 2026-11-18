@@ -28,4 +28,5 @@ Fully client-side Fabric mod (Minecraft 26.3, Java, Mojang mappings) that shows 
 - Unit tests (`core`, no game): `./gradlew test`
 - In-game tests: `./gradlew runClientGameTest` (opens a game window; singleplayer test room plus a dedicated-server test, about a minute; fails the build on a failed check). Tests live in `src/gametest`; screenshots in `build/run/clientGameTest/screenshots/`.
 - Manual release checklist: `docs/TESTING.md`.
+- Manual test world: `touch build/make-test-world && ./gradlew runClientGameTest; rm build/make-test-world` builds a filled storage room into `run/saves/storage-test`; play it with `./gradlew runClient --args="--quickPlaySingleplayer storage-test"`.
 - Decompiled 26.3 sources for checking APIs: `./gradlew genSources`, then the `minecraft-merged-*-sources.jar` under `.gradle/loom-cache/minecraftMaven/`.
