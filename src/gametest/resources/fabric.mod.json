@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "storageterminal-gametest",
+  "version": "1.0.0",
+  "name": "Storage Terminal in-game tests",
+  "license": "AGPL-3.0-only",
+  "environment": "client",
+  "entrypoints": {
+    "fabric-client-gametest": ["dev.trashpanda.storageterminal.mc.ScanGameTest"]
+  },
+  "depends": {
+    "storageterminal": "*"
+  }
+}

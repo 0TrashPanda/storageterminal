@@ -25,4 +25,6 @@ Fully client-side Fabric mod (Minecraft 26.3, Java, Mojang mappings) that shows 
 
 - Build: `./gradlew build` (jar in `build/libs/`; also copied to `../../jars/fabric-26.3` by the workspace init script)
 - Run client: `./gradlew runClient` (game dir `run/`)
-- Tests: none yet; JUnit for `core` arrives in M1 (`./gradlew test`).
+- Unit tests (`core`, no game): `./gradlew test`
+- In-game tests: `./gradlew runClientGameTest` (opens a game window, creates a test world, about 30 s; fails the build on a failed check). Tests live in `src/gametest`.
+- Decompiled 26.3 sources for checking APIs: `./gradlew genSources`, then the `minecraft-merged-*-sources.jar` under `.gradle/loom-cache/minecraftMaven/`.

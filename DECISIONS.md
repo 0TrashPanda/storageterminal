@@ -35,3 +35,22 @@ One line each: what, why. Newest at the bottom.
 - Terminal screen mockups made before M2, at the user's request: https://claude.ai/artifact/DajJgNFdufS674USGEvLtf. Layout A (compact, 9 columns, chest width) vs layout B (13 columns plus a sidebar). Not chosen yet; M2 waits for that choice.
 - **Layout A chosen** (compact, 9 columns, controls in a top bar). Layout B (sidebar) stays the fallback if settings and controls outgrow the top bar. So M2 builds the controls (search, sort, rescan, deposit all, status line) as separate widgets placed by one layout function, not hard-wired to top-bar positions, so moving them to a sidebar later is a layout change only.
 - The mockups also suggest three additions to section 8: click hints in the item tooltip, an amber corner marker for slots whose saved contents haven't been rescanned yet, and a dimmed "busy" look for items in a running job. Confirmed by the user and added to SPEC section 8.
+
+## M1 (2026-11-18)
+
+- Screen suppression: a mixin cancels `MenuScreens.create` at HEAD while a session waits, and creates the menu itself (`type.create(id, inventory)`, assigned to `player.containerMenu`). Why: same effect as cancelling `setScreen`, but no mixin into the `ScreenConstructor` interface default method. In 26.3 screens are set via `minecraft.gui.setScreen`.
+- Server-side close of one of our hidden menus skips vanilla's `handleContainerClose`. Why: vanilla calls `clientSideCloseContainer`, which does `gui.setScreen(null)` and would close the terminal screen (M2).
+- Closing a session menu: send `ServerboundContainerClosePacket` and reset `containerMenu`; `menu.removed()` is not called. Why: we never hold a cursor item in M1, and it keeps the current screen untouched.
+- Late-open guard: for 5 s after a session ended without a menu, a container menu that arrives (and was not clicked by the player in the last 2 s) is closed at once without a screen. Why: a slow server must never leave an invisible container open.
+- Passive caching: the player's own `useItemOn` is remembered for 2 s; a matching vanilla container screen is tracked and snapshotted on content sync and again when it closes.
+- `ItemKey.components` = canonical JSON (sorted keys) of the `components` field from `ItemStack.CODEC`. Why: exact identity incl. damage, names, enchantments; decodable back to a stack for display.
+- Cache file: `config/storageterminal/cache/sp_<world folder>.json` or `mp_<server address>.json`, written atomically (temp file + move). Unreadable or unknown schema: renamed to `.unsupported-<time>` and a fresh cache starts.
+- Config defaults (file comes in M5): `openCooldownTicks` 4, `maxOpensPerSecond` 4, `syncTimeoutMs` 1000, `minRefreshIntervalMs` 30000, `reachMargin` 0.25.
+- Containers whose last open failed (UNREACHABLE) or that are MISSING or ignored are left out of totals, even if older contents are cached.
+- Copper chests count as CHEST (they extend `ChestBlock` and use the same menus). Ender chests are not containers here.
+- Blocked chests follow vanilla `ChestBlock.isChestBlockedAt` (solid block or sitting cat on top), for either half of a double chest. Shulker lid check copies vanilla's private `ShulkerBoxBlock.canOpen`.
+- Sneaking: `scan` refuses to start; during a scan the next open waits until the player stops sneaking.
+- Ignore-toggle key defaults to K. In 26.3 key codes are Minecraft's own (`InputConstants.KEY_K` = 14), not GLFW codes.
+- The generic `JobQueue` arrived in M1 instead of M3, because a scan is already a job.
+- `/storageterminal scan` always rescans (ignores `minRefreshIntervalMs`). `scan`, `dump` and `cache clear` are marked DEBUG; M5 decides which stay.
+- Tests: JUnit 5.11.4 for `core`; an in-game acceptance test (`src/gametest`, Fabric client gametest, `./gradlew runClientGameTest`) builds the M1 test room and checks it automatically.

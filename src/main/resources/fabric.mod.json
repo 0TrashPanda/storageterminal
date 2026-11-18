@@ -13,6 +13,7 @@
   "license": "AGPL-3.0-only",
   "icon": "assets/storageterminal/icon.png",
   "environment": "client",
+  "mixins": ["storageterminal.mixins.json"],
   "entrypoints": {
     "client": ["dev.trashpanda.storageterminal.mc.StorageTerminalClient"]
   },
