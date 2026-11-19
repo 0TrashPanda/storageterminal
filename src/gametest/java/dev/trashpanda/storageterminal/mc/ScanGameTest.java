@@ -183,6 +183,11 @@ public final class ScanGameTest implements FabricClientGameTest {
         int goldSlot = inventoryIndexOf(context, "minecraft:gold_ingot");
         int[] goldStack = context.computeOnClient(mc -> ((TerminalScreen) mc.gui.screen()).inventorySlotCenter(goldSlot));
         shiftScrollAt(context, goldStack, 1);
+        checkSteady(context, "inventory count while storing one", mc -> {
+            ItemStack shown = StorageService.get().outgoingSlot() == goldSlot ? StorageService.get().outgoingStack()
+                    : mc.player.getInventory().getItem(goldSlot);
+            return shown.getCount();
+        });
         waitForJobs(context);
         check(serverCount(world, "minecraft:gold_ingot", true) == 1, "1 gold stored by Shift + wheel, 1 left, got "
                 + serverCount(world, "minecraft:gold_ingot", true));
@@ -448,6 +453,7 @@ public final class ScanGameTest implements FabricClientGameTest {
         long redTotal = serverCount(world, red, false);
         long redBefore = serverCount(world, red, true);
         clickEntry(context, red, InputConstants.MOUSE_BUTTON_LEFT, Mod.NONE);
+        checkSteady(context, "cursor count while taking", mc -> StorageService.get().heldStack(mc).getCount());
         waitForCursor(context);
         int held = heldSlot(context);
         long took = serverCount(world, red, true) - redBefore;
@@ -461,6 +467,7 @@ public final class ScanGameTest implements FabricClientGameTest {
         // Any grid slot will do while holding: the redstone entry may be gone (all of it held).
         int[] anyGridSlot = context.computeOnClient(mc -> ((TerminalScreen) mc.gui.screen()).gridSlotCenter(0));
         clickGui(context, anyGridSlot, InputConstants.MOUSE_BUTTON_RIGHT);
+        checkSteady(context, "cursor count while storing one", mc -> StorageService.get().heldStack(mc).getCount());
         waitForCursor(context);
         check(serverCount(world, red, true) == redBefore + took - 1, "right-click stored one redstone");
         check(heldSlot(context) == held, "the rest is still held");
@@ -570,6 +577,28 @@ public final class ScanGameTest implements FabricClientGameTest {
         context.waitFor(mc -> !StorageService.get().cursorBusy() && StorageService.get().runningTake() == null
                 && StorageService.get().runningPut() == null, 600);
         context.waitTicks(5);
+    }
+
+    /**
+     * Until the running move is done, the value the screen shows must stay what it ends at: it
+     * may change once when the click is made, then never dip or bounce (the jitter bug).
+     */
+    private static void checkSteady(ClientGameTestContext context, String what,
+            java.util.function.ToIntFunction<net.minecraft.client.Minecraft> shown) {
+        java.util.List<Integer> seen = new java.util.ArrayList<>();
+        for (int i = 0; i < 200; i++) {
+            seen.add(context.computeOnClient(mc -> shown.applyAsInt(mc)));
+            boolean busy = context.computeOnClient(mc -> StorageService.get().movesPending());
+            if (!busy) {
+                break;
+            }
+            context.waitTick();
+        }
+        context.waitTicks(5);
+        int end = context.computeOnClient(mc -> shown.applyAsInt(mc));
+        for (int value : seen) {
+            check(value == end, what + " stays at " + end + ", saw " + seen);
+        }
     }
 
     private static void waitForJobs(ClientGameTestContext context) {

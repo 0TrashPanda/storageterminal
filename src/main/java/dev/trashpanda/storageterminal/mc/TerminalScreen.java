@@ -522,6 +522,8 @@ public final class TerminalScreen extends Screen {
                 ItemStack stack = inventory.getItem(i);
                 if (i == service.incomingSlot() && i != held) {
                     stack = service.incomingStack(); // A take into this slot: shown before it is done.
+                } else if (i == service.outgoingSlot() && i != held) {
+                    stack = service.outgoingStack(); // Part of this stack is being stored: what stays.
                 }
                 if (!stack.isEmpty() && i != held) { // The held stack is drawn at the mouse instead.
                     g.item(stack, xy[0] + 1, xy[1] + 1);

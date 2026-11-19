@@ -138,6 +138,9 @@ public final class StorageService {
     private final Deque<CursorOp> cursorOps = new ArrayDeque<>();
     /** What a take-to-cursor will put on the cursor, shown there before the take is done. */
     private ItemStack cursorTakePreview = ItemStack.EMPTY;
+    /** A store of part of a stack (Shift + wheel, right-click while holding): the slot and what stays in it. */
+    private int outgoingSlot = -1;
+    private ItemStack outgoingPreview = ItemStack.EMPTY;
     /** A take into the inventory: the slot it fills and what that slot will hold, shown before it is done. */
     private int incomingSlot = -1;
     private ItemStack incomingPreview = ItemStack.EMPTY;
@@ -430,14 +433,12 @@ public final class StorageService {
         if (slot < 0 || minecraft.player == null) {
             return ItemStack.EMPTY;
         }
-        ItemStack stack = minecraft.player.getInventory().getItem(slot);
-        if (storingHeld < 0) {
-            return ItemStack.EMPTY;
+        if (storingHeld != 0) {
+            // Fixed when the store started; never worked out from the live slot, which already
+            // changes while the store runs (that made the count go down twice, then up again).
+            return slot == outgoingSlot ? outgoingPreview : ItemStack.EMPTY;
         }
-        if (storingHeld > 0) {
-            return stack.getCount() > storingHeld ? stack.copyWithCount((int) (stack.getCount() - storingHeld)) : ItemStack.EMPTY;
-        }
-        return stack;
+        return minecraft.player.getInventory().getItem(slot);
     }
 
     /** The inventory slot drawn empty because its stack is on the cursor (held or being taken there), or -1. */
@@ -654,6 +655,16 @@ public final class StorageService {
         return empty;
     }
 
+    /** Inventory slot a running partial store takes from, or -1 (see {@link #outgoingStack()}). */
+    int outgoingSlot() {
+        return outgoingSlot;
+    }
+
+    /** What {@link #outgoingSlot()} keeps when the store is done. */
+    ItemStack outgoingStack() {
+        return outgoingPreview;
+    }
+
     /** Inventory slot a running take fills, or -1 (see {@link #incomingStack()}). */
     int incomingSlot() {
         return incomingSlot;
@@ -795,6 +806,12 @@ public final class StorageService {
             adding.replaceAll((k, v) -> Math.min(v, limit));
         }
         setPrediction(adding);
+        if (limit != PutOperator.WHOLE_STACKS && requests.size() == 1) {
+            int index = requests.get(0).inventoryIndex();
+            ItemStack stack = player.getInventory().getItem(index);
+            outgoingSlot = index;
+            outgoingPreview = stack.copyWithCount((int) Math.max(0, stack.getCount() - Math.min(stack.getCount(), limit)));
+        }
         kickJobs();
         return true;
     }
@@ -981,6 +998,8 @@ public final class StorageService {
         save();
         clearPrediction();
         storingHeld = 0;
+        outgoingSlot = -1;
+        outgoingPreview = ItemStack.EMPTY;
         wheelFailed |= result.problem() != null;
         String stored = "Stored " + CountFormat.exact(result.moved());
         if (stopsQueue(result.problem()) && queuedCount() > 0) {
