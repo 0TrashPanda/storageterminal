@@ -134,6 +134,14 @@ public final class StorageService {
     }
 
     private final Deque<CursorOp> cursorOps = new ArrayDeque<>();
+    /** What a take-to-cursor will put on the cursor, shown there before the take is done. */
+    private ItemStack cursorTakePreview = ItemStack.EMPTY;
+    /** The held stack is being stored: 0 none, -1 all of it, else this many items. */
+    private long storingHeld;
+
+    // Shown at once: how each item's stored total changes when the running move is done.
+    private final Map<ItemKey, Long> predicted = new LinkedHashMap<>();
+    private int predictionId;
 
     private StorageService() {
     }
@@ -198,6 +206,7 @@ public final class StorageService {
         jobs.tick();
         continueWheel(minecraft);
         continueQueued(minecraft);
+        kickJobs();
         if (passiveMenu != null && minecraft.player.containerMenu != passiveMenu) {
             capturePassiveAndForget();
         }
@@ -336,17 +345,21 @@ public final class StorageService {
         }
         jobs.enqueue(new TakeJob(minecraft, cache, rateLimiter, config, item, reference, amount,
                 preferredInventoryIndex, stops, result -> onTakeFinished(minecraft, result), this::armLateOpenGuard));
+        setPrediction(Map.of(item, -amount));
+        kickJobs();
         return true;
     }
 
     private void onTakeFinished(Minecraft minecraft, TakeJob.Result result) {
         save();
+        clearPrediction();
         if (cursorTakeSlot >= 0 && minecraft.player != null) {
             if (!minecraft.player.getInventory().getItem(cursorTakeSlot).isEmpty()) {
                 heldSlot = cursorTakeSlot;
             }
             cursorTakeSlot = -1;
         }
+        cursorTakePreview = ItemStack.EMPTY;
         wheelFailed |= result.problem() != null;
         String took = "Took " + CountFormat.exact(result.moved());
         if (result.problem() == null) {
@@ -383,15 +396,66 @@ public final class StorageService {
         return heldSlot;
     }
 
-    /** The held stack (in its slot), or empty. */
+    /**
+     * What the cursor shows: the held stack, or what a running take will put there, minus what a
+     * running store takes away. Shown before the move is done, so clicks feel instant.
+     */
     ItemStack heldStack(Minecraft minecraft) {
+        if (cursorTakeSlot >= 0) {
+            return cursorTakePreview;
+        }
         int slot = heldSlot();
-        return slot < 0 || minecraft.player == null ? ItemStack.EMPTY : minecraft.player.getInventory().getItem(slot);
+        if (slot < 0 || minecraft.player == null) {
+            return ItemStack.EMPTY;
+        }
+        ItemStack stack = minecraft.player.getInventory().getItem(slot);
+        if (storingHeld < 0) {
+            return ItemStack.EMPTY;
+        }
+        if (storingHeld > 0) {
+            return stack.getCount() > storingHeld ? stack.copyWithCount((int) (stack.getCount() - storingHeld)) : ItemStack.EMPTY;
+        }
+        return stack;
     }
 
-    /** True while a take to the cursor or a click on the held stack is still on its way. */
+    /** The inventory slot drawn empty because its stack is on the cursor (held or being taken there), or -1. */
+    int cursorSlot() {
+        return cursorTakeSlot >= 0 ? cursorTakeSlot : heldSlot();
+    }
+
+    /** True while a take to the cursor, a store from it or a click on it is still on its way. */
     boolean cursorBusy() {
-        return cursorTakeSlot >= 0 || !cursorOps.isEmpty();
+        return cursorTakeSlot >= 0 || storingHeld != 0 || !cursorOps.isEmpty();
+    }
+
+    /** How stored totals change once the running move is done (see {@link #predictionId()}). */
+    Map<ItemKey, Long> predicted() {
+        return predicted;
+    }
+
+    /** Changes whenever {@link #predicted()} does. */
+    int predictionId() {
+        return predictionId;
+    }
+
+    private void setPrediction(Map<ItemKey, Long> delta) {
+        predicted.clear();
+        predicted.putAll(delta);
+        predictionId++;
+    }
+
+    private void clearPrediction() {
+        if (!predicted.isEmpty()) {
+            predicted.clear();
+            predictionId++;
+        }
+    }
+
+    /** A job made outside the tick starts right away instead of on the next tick. */
+    private void kickJobs() {
+        if (jobs.current() == null && jobs.isBusy()) {
+            jobs.tick();
+        }
     }
 
     /** Plain click on a grid entry with nothing held: a stack (or half) onto the cursor. */
@@ -406,6 +470,9 @@ public final class StorageService {
         }
         if (startTake(minecraft, item, mode, 1, park)) {
             cursorTakeSlot = park;
+            TakeJob take = runningTake();
+            cursorTakePreview = take == null ? ItemStack.EMPTY
+                    : ItemKeys.toStack(item, (int) take.wanted(), minecraft.level.registryAccess());
         }
     }
 
@@ -415,13 +482,15 @@ public final class StorageService {
         if (slot < 0 || cursorBusy()) {
             return;
         }
-        startPut(minecraft, List.of(slot), one ? 1 : PutOperator.WHOLE_STACKS, true);
+        if (startPut(minecraft, List.of(slot), one ? 1 : PutOperator.WHOLE_STACKS, true)) {
+            storingHeld = one ? 1 : -1;
+        }
     }
 
     /** Plain click on inventory slot {@code index}: pick up, place, swap or merge, like vanilla. */
     void cursorClickInventory(Minecraft minecraft, int index, boolean right) {
-        if (minecraft.player == null || cursorTakeSlot >= 0) {
-            return;
+        if (minecraft.player == null || cursorTakeSlot >= 0 || storingHeld != 0) {
+            return; // The held stack is still on its way into or out of storage.
         }
         if (heldSlot() < 0 && cursorOps.isEmpty()) {
             ItemStack stack = minecraft.player.getInventory().getItem(index);
@@ -441,7 +510,7 @@ public final class StorageService {
 
     /** Click outside the panel while holding: drop it, like vanilla (right: one item). */
     void dropHeld(Minecraft minecraft, boolean right) {
-        if (heldSlot() < 0 && cursorOps.isEmpty()) {
+        if (storingHeld != 0 || cursorTakeSlot >= 0 || (heldSlot() < 0 && cursorOps.isEmpty())) {
             return;
         }
         cursorOps.addLast(new DropOp(right));
@@ -649,6 +718,15 @@ public final class StorageService {
         }
         jobs.enqueue(new PutJob(minecraft, cache, rateLimiter, config, requests, planned, visits, what, limit,
                 result -> onPutFinished(minecraft, result), this::armLateOpenGuard));
+        Map<ItemKey, Long> adding = new LinkedHashMap<>();
+        for (PutJob.Request request : requests) {
+            adding.merge(request.item(), (long) player.getInventory().getItem(request.inventoryIndex()).getCount(), Long::sum);
+        }
+        if (limit != PutOperator.WHOLE_STACKS) {
+            adding.replaceAll((k, v) -> Math.min(v, limit));
+        }
+        setPrediction(adding);
+        kickJobs();
         return true;
     }
 
@@ -734,6 +812,11 @@ public final class StorageService {
         wheelJobRunning = false;
         wheelQueued = 0;
         queued.clear();
+    }
+
+    /** True while anything is moving or waiting to move (the terminal then keeps its grid order). */
+    boolean movesPending() {
+        return runningTake() != null || runningPut() != null || !queued.isEmpty() || wheelJobRunning || cursorBusy();
     }
 
     private boolean idle() {
@@ -822,6 +905,8 @@ public final class StorageService {
 
     private void onPutFinished(Minecraft minecraft, PutJob.Result result) {
         save();
+        clearPrediction();
+        storingHeld = 0;
         wheelFailed |= result.problem() != null;
         String stored = "Stored " + CountFormat.exact(result.moved());
         if (result.problem() == null) {
@@ -848,7 +933,10 @@ public final class StorageService {
         clearWheel();
         heldSlot = -1;
         cursorTakeSlot = -1;
+        cursorTakePreview = ItemStack.EMPTY;
+        storingHeld = 0;
         cursorOps.clear();
+        clearPrediction();
         jobs.cancelAll("terminal closed");
         save();
     }
@@ -891,6 +979,7 @@ public final class StorageService {
 
     void cancelJobs(String reason) {
         clearWheel();
+        clearPrediction();
         jobs.cancelAll(reason);
     }
 

@@ -20,8 +20,8 @@ class ConfigCodecTest {
 
     @Test
     void missingKeysUseDefaultsSilently() {
-        ConfigCodec.ReadResult result = ConfigCodec.read("{ \"maxOpensPerSecond\": 8 }");
-        assertEquals(8, result.config().maxOpensPerSecond());
+        ConfigCodec.ReadResult result = ConfigCodec.read("{ \"maxOpensPerSecond\": 12 }");
+        assertEquals(12, result.config().maxOpensPerSecond());
         assertEquals(Config.DEFAULTS.syncTimeoutMs(), result.config().syncTimeoutMs());
         assertTrue(result.problems().isEmpty());
     }

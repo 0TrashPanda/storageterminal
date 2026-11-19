@@ -19,8 +19,8 @@ public record Config(
 
     public static final Config DEFAULTS = new Config(
             0.25,
-            4,
-            4,
+            2,
+            8,
             1000L,
             30_000L,
             true,

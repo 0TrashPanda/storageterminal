@@ -229,7 +229,7 @@ final class TakeOperator implements ContainerSession.Operator {
         return slots;
     }
 
-    /** Two ticks plus the round trip to the server. */
+    /** One tick plus the round trip to the server. */
     static int settleTicks(Minecraft minecraft) {
         LocalPlayer player = minecraft.player;
         int latencyMs = 0;
@@ -239,7 +239,7 @@ final class TakeOperator implements ContainerSession.Operator {
                 latencyMs = info.getLatency();
             }
         }
-        return 2 + (latencyMs + 49) / 50;
+        return 1 + (latencyMs + 49) / 50;
     }
 
     /** Count of our item in the player's main inventory (36 slots). */

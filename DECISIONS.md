@@ -132,3 +132,12 @@ One line each: what, why. Newest at the bottom.
 - Deposit all, Alt-click, Shift-click, Shift-drag and Shift + wheel never store the held stack. Closing the terminal just forgets the hold; the items stay in the slot.
 - Not done: vanilla's plain drag to spread a held stack over slots, and the grid bundle fill/empty actions from SPEC 12b.
 - Tests: the existing in-game tests use Shift-click where they meant "store this stack" and put a held stack down before the next take. New checks: take to cursor, store one / all from the cursor, swap, split and merge, a held bundle taking a stack in (vanilla logic, checked on the server), dropping outside the panel (6 item entities on the ground), cursor empty and no container open on both sides. The dedicated-server test holds 64 iron and stores it again.
+
+## Speed (2026-11-19)
+
+- Measured after the first play test ("it felt slow"): about 250 ms (5 ticks) per container for a take or store, plus the open gap for each further container.
+- A take or store now starts in the tick of the click instead of the next tick, and waits 1 tick (plus ping) instead of 2 before reading a container back. About 200 ms per container in singleplayer.
+- Default open rate raised (user's choice): `openCooldownTicks` 4 to 2, `maxOpensPerSecond` 4 to 8. Faster for multi-container moves and Deposit all; it looks less like a human player to anti-cheat, and both stay configurable. Existing config files keep their values (the dev run config was updated by hand).
+- Results are shown at once: the grid shows each item's total as it will be when the running move is done (`StorageIndex.withPredicted`, from the totals when the move started), and the cursor shows what a take to it will bring and hides what is being stored from it. If a move falls short, the real numbers replace the prediction when it ends, with the usual message.
+- While anything moves or a Shift-drag runs, the grid keeps every entry in its place (`TerminalList.keepOrder`); an item taken down to 0 stays (dimmed, no number) until the move ends. Without this the grid re-sorted under the mouse and a Shift-drag hit the wrong items.
+- Found on the way: a move stopped inside a container (e.g. terminal closed) did not record that container's contents, so the cache could claim items that had already moved. An aborted session now snapshots the container before closing it, and take and put jobs store that snapshot.

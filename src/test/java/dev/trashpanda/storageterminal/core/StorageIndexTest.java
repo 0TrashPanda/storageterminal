@@ -57,4 +57,28 @@ class StorageIndexTest {
         cache.markAllStale();
         assertEquals(3, StorageIndex.aggregate(cache.records()).get(0).total());
     }
+
+    @Test
+    void predictedTotalsShowAMoveBeforeItIsDone() {
+        ItemKey iron = ItemKey.of("minecraft:iron_ingot");
+        ItemKey gold = ItemKey.of("minecraft:gold_ingot");
+        ItemKey dirt = ItemKey.of("minecraft:dirt");
+        java.util.List<StorageIndex.Entry> real = java.util.List.of(
+                new StorageIndex.Entry(iron, 100, java.util.List.of(), false, 1),
+                new StorageIndex.Entry(gold, 10, java.util.List.of(), false, 1));
+        // Taking 64 iron and all 10 gold, storing 5 dirt (new). Partway, the cache already has 70 iron left.
+        java.util.List<StorageIndex.Entry> partway = java.util.List.of(
+                new StorageIndex.Entry(iron, 70, java.util.List.of(), false, 1),
+                new StorageIndex.Entry(gold, 10, java.util.List.of(), false, 1));
+        java.util.Map<ItemKey, Long> baseline = java.util.Map.of(iron, 100L, gold, 10L, dirt, 0L);
+        java.util.Map<ItemKey, Long> delta = java.util.Map.of(iron, -64L, gold, -10L, dirt, 5L);
+        for (java.util.List<StorageIndex.Entry> now : java.util.List.of(real, partway)) {
+            java.util.Map<ItemKey, Long> shown = new java.util.HashMap<>();
+            for (StorageIndex.Entry e : StorageIndex.withPredicted(now, baseline, delta, 2)) {
+                shown.put(e.item(), e.total());
+            }
+            assertEquals(java.util.Map.of(iron, 36L, gold, 0L, dirt, 5L), shown, "gold at 0 (stays put), dirt added, iron as it will end");
+        }
+        assertEquals(real, StorageIndex.withPredicted(real, java.util.Map.of(), java.util.Map.of(), 2), "no move: unchanged");
+    }
 }

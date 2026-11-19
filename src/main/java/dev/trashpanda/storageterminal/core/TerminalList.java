@@ -94,4 +94,18 @@ public final class TerminalList {
         int colon = item.itemId().indexOf(':');
         return colon < 0 ? "minecraft" : item.itemId().substring(0, colon);
     }
+
+    /**
+     * {@code fresh} in the order of {@code previous}: entries already shown keep their place,
+     * new ones go at the end. Used while a move runs, so the grid does not jump under the mouse.
+     */
+    public static List<StorageIndex.Entry> keepOrder(List<StorageIndex.Entry> fresh, List<StorageIndex.Entry> previous) {
+        java.util.Map<ItemKey, Integer> place = new java.util.HashMap<>();
+        for (int i = 0; i < previous.size(); i++) {
+            place.putIfAbsent(previous.get(i).item(), i);
+        }
+        List<StorageIndex.Entry> out = new java.util.ArrayList<>(fresh);
+        out.sort(java.util.Comparator.comparingInt(e -> place.getOrDefault(e.item(), Integer.MAX_VALUE)));
+        return out;
+    }
 }

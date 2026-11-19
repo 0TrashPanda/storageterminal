@@ -225,6 +225,12 @@ final class PutJob implements ContainerJob {
     public void cancel(String reason) {
         if (session != null) {
             session.abort(minecraft, reason);
+            if (session.snapshot() != null && guard.level() != null) {
+                // Stopped inside the container: keep what it holds now, not the old contents.
+                ContainerDiscovery.Target t = session.target();
+                cache.putSnapshot(t.key(), t.found().type(), t.found().positions(), session.snapshot(),
+                        System.currentTimeMillis(), guard.level().getGameTime());
+            }
             if (session.endedWithoutMenu()) {
                 onSessionEndedWithoutMenu.run();
             }

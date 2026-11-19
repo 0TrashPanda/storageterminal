@@ -65,8 +65,8 @@ The file is `config/storageterminal/config.json`, created on first start with a 
 | Setting | Default | Meaning |
 |---|---|---|
 | `reachMargin` | 0.25 | Stay this many blocks inside your reach (0 to 2). |
-| `openCooldownTicks` | 4 | Minimum ticks between opening two containers (0 to 100). |
-| `maxOpensPerSecond` | 4 | Hard limit on containers opened per second (1 to 20). |
+| `openCooldownTicks` | 2 | Minimum ticks between opening two containers (0 to 100). |
+| `maxOpensPerSecond` | 8 | Hard limit on containers opened per second (1 to 20). |
 | `syncTimeoutMs` | 1000 | How long to wait for a container's contents before giving up on it. Raise it on laggy servers (200 to 30000). |
 | `minRefreshIntervalMs` | 30000 | When the terminal opens, containers looked into less than this long ago are not opened again. The Scan button always rescans. |
 | `includeTrappedChests` | true | Use trapped chests (they send a redstone signal while open). |

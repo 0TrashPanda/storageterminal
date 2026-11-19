@@ -163,6 +163,10 @@ final class ContainerSession {
         if (menu != null && operator != null && synced) {
             operator.cleanup(minecraft, menu);
         }
+        if (menu != null && synced) {
+            // What the container holds now (clicks may already have changed it), so the cache stays right.
+            snapshot = copySlots(minecraft);
+        }
         close(minecraft);
         fail(reason);
     }

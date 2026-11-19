@@ -396,16 +396,18 @@ public final class ScanGameTest implements FabricClientGameTest {
         context.getInput().pressKey(StorageTerminalClient.openTerminalKey());
         context.waitForScreen(TerminalScreen.class);
         context.waitFor(mc -> StorageService.get().runningScan() == null, 600);
-        String red = "minecraft:redstone";
+        // Diamonds: still stored after the take tests (the redstone may all be in the inventory by now).
+        String red = "minecraft:diamond";
 
-        // Click: a stack of redstone onto the cursor.
+        // Click: a stack of diamonds onto the cursor.
         long redTotal = serverCount(world, red, false);
         long redBefore = serverCount(world, red, true);
         clickEntry(context, red, InputConstants.MOUSE_BUTTON_LEFT, Mod.NONE);
         waitForCursor(context);
         int held = heldSlot(context);
         long took = serverCount(world, red, true) - redBefore;
-        check(held >= 0 && took > 0, "redstone held after a click (slot " + held + ", took " + took + ")");
+        check(held >= 0 && took > 0, "redstone held after a click (slot " + held + ", took " + took + ", "
+                + context.computeOnClient(mc -> String.valueOf(StorageService.get().feedback())) + ")");
         check(countIf(serverSlot(world, held), red) == took, "the held redstone sits in its slot on the server");
         check(serverCount(world, red, false) == redTotal, "redstone neither lost nor duplicated (take)");
         context.takeScreenshot("12b-cursor-held");

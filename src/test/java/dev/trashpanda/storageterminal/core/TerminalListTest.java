@@ -100,4 +100,22 @@ class TerminalListTest {
         assertFalse(record.isStale());
         assertEquals(0, record.changedAt(OAK), "removed items are forgotten");
     }
+
+    @Test
+    void keepOrderHoldsPlacesWhileAMoveRuns() {
+        ItemKey a = ItemKey.of("minecraft:a");
+        ItemKey b = ItemKey.of("minecraft:b");
+        ItemKey c = ItemKey.of("minecraft:c");
+        List<StorageIndex.Entry> before = List.of(
+                new StorageIndex.Entry(a, 50, List.of(), false, 0),
+                new StorageIndex.Entry(b, 40, List.of(), false, 0));
+        // b grew past a and c is new: a stays first, b second, c at the end.
+        List<StorageIndex.Entry> fresh = List.of(
+                new StorageIndex.Entry(c, 99, List.of(), false, 0),
+                new StorageIndex.Entry(b, 90, List.of(), false, 0),
+                new StorageIndex.Entry(a, 0, List.of(), false, 0));
+        List<StorageIndex.Entry> kept = TerminalList.keepOrder(fresh, before);
+        assertEquals(List.of(a, b, c), kept.stream().map(StorageIndex.Entry::item).toList());
+        assertEquals(90, kept.get(1).total(), "totals are the fresh ones");
+    }
 }

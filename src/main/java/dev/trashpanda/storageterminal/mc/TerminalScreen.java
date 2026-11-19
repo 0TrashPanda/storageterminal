@@ -90,6 +90,11 @@ public final class TerminalScreen extends Screen {
     private String seenQuery;
     private SortOrder seenSort;
     private int seenReachableHash;
+    private int seenPredictionId = -1;
+    private boolean seenFrozen;
+    /** Totals when the current prediction started (see StorageService#predicted). */
+    private final Map<ItemKey, Long> predictionBaseline = new HashMap<>();
+    private List<StorageIndex.Entry> realEntries = List.of();
     private List<StorageIndex.Entry> allEntries = List.of();
     private List<StorageIndex.Entry> shown = List.of();
     private int scrollRow;
@@ -180,9 +185,13 @@ public final class TerminalScreen extends Screen {
         String query = search.getValue();
         int reachableHash = service.reachable().hashCode();
         if (cache == seenCache && cache.version() == seenVersion && reachableHash == seenReachableHash
-                && query.equals(seenQuery) && service.sortOrder() == seenSort) {
+                && query.equals(seenQuery) && service.sortOrder() == seenSort && service.predictionId() == seenPredictionId
+                && frozen() == seenFrozen) {
             return;
         }
+        // While something moves, keep every entry where it is (the player chose search and sort, so those still apply).
+        boolean keepPlaces = frozen() && query.equals(seenQuery) && service.sortOrder() == seenSort;
+        seenFrozen = frozen();
         boolean dataChanged = cache != seenCache || cache.version() != seenVersion || reachableHash != seenReachableHash;
         seenCache = cache;
         seenVersion = cache.version();
@@ -196,10 +205,31 @@ public final class TerminalScreen extends Screen {
                     inReach.add(record);
                 }
             }
-            allEntries = StorageIndex.aggregate(inReach);
+            realEntries = StorageIndex.aggregate(inReach);
         }
-        shown = TerminalList.filterAndSort(allEntries, query, seenSort, itemInfo);
+        if (service.predictionId() != seenPredictionId) {
+            // A move started or ended: remember the totals it starts from.
+            seenPredictionId = service.predictionId();
+            predictionBaseline.clear();
+            for (ItemKey item : service.predicted().keySet()) {
+                long total = 0;
+                for (StorageIndex.Entry entry : realEntries) {
+                    if (entry.item().equals(item)) {
+                        total = entry.total();
+                    }
+                }
+                predictionBaseline.put(item, total);
+            }
+        }
+        allEntries = StorageIndex.withPredicted(realEntries, predictionBaseline, service.predicted(), System.currentTimeMillis());
+        List<StorageIndex.Entry> sorted = TerminalList.filterAndSort(allEntries, query, seenSort, itemInfo);
+        shown = keepPlaces ? TerminalList.keepOrder(sorted, shown) : sorted;
         scrollRow = Math.min(scrollRow, maxScrollRow());
+    }
+
+    /** Grid order is frozen while items move or a Shift-drag is under way. */
+    private boolean frozen() {
+        return shiftDragging || service.movesPending();
     }
 
     private ItemStack stackFor(ItemKey key) {
@@ -373,8 +403,9 @@ public final class TerminalScreen extends Screen {
                 ItemStack stack = stackFor(entry.item());
                 if (!stack.isEmpty()) {
                     g.item(stack, x + 1, y + 1);
+                    // 0: all of it is being taken; it stays (dimmed) until the move is done.
                     g.itemDecorations(font, stack, x + 1, y + 1,
-                            entry.total() == 1 ? "" : CountFormat.compact(entry.total()));
+                            entry.total() <= 1 ? "" : CountFormat.compact(entry.total()));
                 }
             }
         }
@@ -460,7 +491,7 @@ public final class TerminalScreen extends Screen {
     private void drawInventory(GuiGraphicsExtractor g) {
         Inventory inventory = minecraft.player == null ? null : minecraft.player.getInventory();
         PutJob put = service.runningPut();
-        int held = service.heldSlot();
+        int held = service.cursorSlot();
         java.util.Set<Integer> storing = new java.util.HashSet<>(service.queuedStoreSlots());
         if (put != null) {
             storing.addAll(put.pendingInventorySlots());
