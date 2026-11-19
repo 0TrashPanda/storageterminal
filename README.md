@@ -20,11 +20,15 @@ Put the Storage Terminal jar and Fabric API in your `mods` folder. Only you need
 |---|---|
 | **B** | Open the terminal. It shows what is in every chest, trapped chest, barrel and placed shulker box in reach, then rescans them in the background. |
 | **K** (looking at a container) | Ignore it, or stop ignoring it. Ignored containers are never opened or used. |
-| Click or Shift-click an item | Take one stack (or all of it, if there is less). |
-| Right-click an item | Take half a stack. |
+| Click an item | Take one stack (or all of it, if there is less) onto your cursor. |
+| Right-click an item | Take half a stack onto your cursor. |
+| Click the grid while holding something | Store what you hold. Right-click stores just one. |
+| Shift-click an item | Take one stack straight into your inventory. |
 | Alt-click an item | Take as much as fits in your inventory. |
 | Shift + wheel over an item | Wheel down takes 1, wheel up stores 1. |
-| Click or Shift-click a stack in your inventory | Store it. |
+| Click or right-click in your inventory | Pick up, put down, swap and split stacks like in any inventory. Bundles work as usual. |
+| Click outside the window while holding something | Drop it, like in any inventory (right-click drops one). |
+| Shift-click a stack in your inventory | Store it. |
 | Alt-click a stack in your inventory | Store every stack of that item. |
 | Shift + wheel over a stack in your inventory | Wheel up stores 1 of it, wheel down takes 1 more onto it. |
 | Shift-drag over items or inventory stacks | Take a stack of every item, or store every stack, the mouse passes over. They are done one after another. |
@@ -33,6 +37,8 @@ Put the Storage Terminal jar and Fabric API in your `mods` folder. Only you need
 | **Cancel** | Stop the running take or store. |
 
 Both keys can be changed in Options > Controls > Key Binds > Storage Terminal.
+
+What you hold in the terminal is really kept in a free slot of your inventory (it shows empty while you hold it). So closing the terminal never drops it, and taking onto the cursor needs one free slot.
 
 **Search:** type part of a name (`iron`), `@mod` for a mod (`@minecraft`), or `#tag` for an item tag (`#c:ingots`). Several words must all match.
 

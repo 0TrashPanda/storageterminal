@@ -33,7 +33,8 @@ import net.minecraft.world.item.ItemStack;
  * rescan on top, then a status line, the aggregated item grid with a scrollbar, and the player's
  * inventory. Clicking a grid entry takes items (M3); clicking an inventory stack stores it (M4).
  * Alt + click moves all of an item, Shift + wheel moves one, Shift-drag moves a stack of
- * everything the mouse passes over (SPEC 12b).
+ * everything the mouse passes over, and plain clicks work with a held stack like a vanilla
+ * cursor (SPEC 12b; the held stack really stays in an inventory slot, see StorageService).
  *
  * <p>Controls are placed by {@link #layout()} only, so they can move to a sidebar (layout B)
  * later without touching the rest.
@@ -237,7 +238,13 @@ public final class TerminalScreen extends Screen {
         }
         drawStaleMarkers(g);
         drawBusy(g);
-        if (hovered != null) {
+        ItemStack held = service.heldStack(minecraft);
+        if (!held.isEmpty()) {
+            // Held items follow the mouse; no tooltips meanwhile, as in vanilla.
+            g.nextStratum();
+            g.item(held, mouseX - 8, mouseY - 8);
+            g.itemDecorations(font, held, mouseX - 8, mouseY - 8);
+        } else if (hovered != null) {
             ItemStack stack = stackFor(hovered.item());
             g.setTooltipForNextFrame(font, tooltipFor(hovered, stack), stack.getTooltipImage(), mouseX, mouseY);
         } else {
@@ -453,6 +460,7 @@ public final class TerminalScreen extends Screen {
     private void drawInventory(GuiGraphicsExtractor g) {
         Inventory inventory = minecraft.player == null ? null : minecraft.player.getInventory();
         PutJob put = service.runningPut();
+        int held = service.heldSlot();
         java.util.Set<Integer> storing = new java.util.HashSet<>(service.queuedStoreSlots());
         if (put != null) {
             storing.addAll(put.pendingInventorySlots());
@@ -462,7 +470,7 @@ public final class TerminalScreen extends Screen {
             drawSlot(g, xy[0], xy[1]);
             if (inventory != null) {
                 ItemStack stack = inventory.getItem(i);
-                if (!stack.isEmpty()) {
+                if (!stack.isEmpty() && i != held) { // The held stack is drawn at the mouse instead.
                     g.item(stack, xy[0] + 1, xy[1] + 1);
                     g.itemDecorations(font, stack, xy[0] + 1, xy[1] + 1);
                     if (storing.contains(i)) {
@@ -534,7 +542,7 @@ public final class TerminalScreen extends Screen {
         if (entry.anyStale()) {
             lines.add(Component.literal("Partly from saved contents, not rescanned yet").withStyle(ChatFormatting.GOLD));
         }
-        lines.add(Component.literal("Click: 1 stack \u00B7 Right-click: half")
+        lines.add(Component.literal("Click: 1 stack \u00B7 Right-click: half \u00B7 Shift: to inventory")
                 .withStyle(ChatFormatting.GRAY, ChatFormatting.ITALIC));
         lines.add(Component.literal("Alt-click: fill \u00B7 Shift+wheel: 1 \u00B7 Shift-drag")
                 .withStyle(ChatFormatting.GRAY, ChatFormatting.ITALIC));
@@ -607,28 +615,29 @@ public final class TerminalScreen extends Screen {
         }
         int inventoryIndex = inventoryIndexAt((int) event.x(), (int) event.y());
         if (inventoryIndex >= 0 && minecraft.player != null) {
-            if (event.button() == InputConstants.MOUSE_BUTTON_LEFT) {
-                ItemStack clicked = minecraft.player.getInventory().getItem(inventoryIndex);
-                if (shiftDown(event) && !altDown(event)) {
-                    // Shift-click: this stack, queued if a job runs; the drag may add more.
-                    shiftDragging = true;
-                    dragInventory.add(inventoryIndex);
-                    service.queueStore(minecraft, inventoryIndex);
-                } else if (!clicked.isEmpty()) {
+            boolean left = event.button() == InputConstants.MOUSE_BUTTON_LEFT;
+            boolean right = event.button() == InputConstants.MOUSE_BUTTON_RIGHT;
+            ItemStack clicked = minecraft.player.getInventory().getItem(inventoryIndex);
+            if (left && altDown(event)) {
+                // Alt-click: every stack of this item, main inventory and hotbar (never the held one).
+                if (!clicked.isEmpty() && inventoryIndex != service.heldSlot()) {
                     List<Integer> slots = new ArrayList<>();
-                    if (altDown(event)) {
-                        // Every stack of this item, main inventory and hotbar.
-                        for (int i = 0; i < 36; i++) {
-                            ItemStack other = minecraft.player.getInventory().getItem(i);
-                            if (!other.isEmpty() && ItemStack.isSameItemSameComponents(other, clicked)) {
-                                slots.add(i);
-                            }
+                    for (int i = 0; i < 36; i++) {
+                        ItemStack other = minecraft.player.getInventory().getItem(i);
+                        if (!other.isEmpty() && ItemStack.isSameItemSameComponents(other, clicked)) {
+                            slots.add(i);
                         }
-                    } else {
-                        slots.add(inventoryIndex);
                     }
                     service.startPut(minecraft, slots);
                 }
+            } else if (left && shiftDown(event)) {
+                // Shift-click: this stack, queued if a job runs; the drag may add more.
+                shiftDragging = true;
+                dragInventory.add(inventoryIndex);
+                service.queueStore(minecraft, inventoryIndex);
+            } else if (left || right) {
+                // Plain click: pick up, place, swap or merge, like a vanilla inventory.
+                service.cursorClickInventory(minecraft, inventoryIndex, right);
             }
             return true;
         }
@@ -643,21 +652,28 @@ public final class TerminalScreen extends Screen {
                 }
                 return true;
             }
-            if (entry != null) {
-                TakePlanner.Mode mode;
-                if (event.button() == InputConstants.MOUSE_BUTTON_RIGHT) {
-                    mode = TakePlanner.Mode.HALF;
-                } else if (event.button() == InputConstants.MOUSE_BUTTON_LEFT) {
-                    // Alt + click: all that fits. Click: one stack.
-                    mode = altDown(event) ? TakePlanner.Mode.FILL : TakePlanner.Mode.STACK;
-                } else {
-                    return true;
+            boolean left = event.button() == InputConstants.MOUSE_BUTTON_LEFT;
+            boolean right = event.button() == InputConstants.MOUSE_BUTTON_RIGHT;
+            if (left && altDown(event)) {
+                if (entry != null) {
+                    service.startTake(minecraft, entry.item(), TakePlanner.Mode.FILL); // As much as fits.
                 }
-                service.startTake(minecraft, entry.item(), mode);
+            } else if ((left || right) && service.heldSlot() >= 0) {
+                service.storeHeld(minecraft, right); // Holding something: store it (right: one item).
+            } else if ((left || right) && entry != null) {
+                service.takeToCursor(minecraft, entry.item(), right ? TakePlanner.Mode.HALF : TakePlanner.Mode.STACK);
             }
             return true;
         }
-        return super.mouseClicked(event, doubleClick);
+        if (super.mouseClicked(event, doubleClick)) {
+            return true;
+        }
+        if (!insidePanel(event.x(), event.y()) && service.heldSlot() >= 0) {
+            // Outside the panel: drop the held stack, like vanilla (right: one item).
+            service.dropHeld(minecraft, event.button() == InputConstants.MOUSE_BUTTON_RIGHT);
+            return true;
+        }
+        return false;
     }
 
     @Override
@@ -695,6 +711,10 @@ public final class TerminalScreen extends Screen {
         if (entry != null && dragEntries.add(entry.item())) {
             service.queueTake(minecraft, entry.item());
         }
+    }
+
+    private boolean insidePanel(double x, double y) {
+        return x >= left && x < left + PANEL_W && y >= top && y < top + FIXED_H + rows * SLOT;
     }
 
     private boolean onScrollbar(double x, double y) {

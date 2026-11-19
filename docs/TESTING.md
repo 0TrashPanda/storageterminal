@@ -26,7 +26,9 @@ Set up a room with: a single chest, a double chest, a trapped chest, a barrel, a
 
 ### Take
 
-- [ ] Click: one stack (or all if less), taken from several containers if needed.
+- [ ] Click: one stack (or all if less) onto the cursor, taken from several containers if needed. Its parking slot shows empty while held.
+- [ ] Holding: click the grid stores it, right-click stores one. Click outside the window drops it (right: one). Closing the terminal keeps it in the inventory.
+- [ ] In the inventory panel: pick up, put down, swap, right-click split, and a bundle taking a stack in, all like vanilla.
 - [ ] Right-click: half a stack. Shift-click: one stack. Alt-click: as much as fits.
 - [ ] Shift + wheel down over an entry: 1 item per notch; quick notches are added up. Wheel up stores 1.
 - [ ] Change a chest by hand after the scan, then take from it: you get what is really there, the rest comes from other containers or is reported.
@@ -35,7 +37,7 @@ Set up a room with: a single chest, a double chest, a trapped chest, a barrel, a
 
 ### Store
 
-- [ ] Click an inventory stack: it goes to a container with a partial stack of the same item first.
+- [ ] Shift-click an inventory stack: it goes to a container with a partial stack of the same item first.
 - [ ] Shift-click: only that stack is stored. Alt-click: every stack of that item is stored.
 - [ ] Shift-drag over several inventory stacks: each is dimmed, then stored. Over several grid entries: a stack of each is taken. Closing the terminal mid-drag stops the rest.
 - [ ] Shift + wheel over an inventory stack: up stores 1 of it, down adds 1 from storage to it. Cursor empty afterwards.

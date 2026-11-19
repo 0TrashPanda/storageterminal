@@ -71,6 +71,17 @@ public final class MultiplayerGameTest implements FabricClientGameTest {
             check(count(server, IRON, true) == 0, "the iron stored again by Shift + wheel");
             check(count(server, IRON, false) == 90, "iron neither lost nor duplicated");
 
+            // Cursor: a plain click holds a stack of iron (parked in a slot), a click on the grid stores it again.
+            int[] ironEntry = entryCenter(context, IRON);
+            plainClick(context, ironEntry);
+            waitForJobs(context);
+            check(count(server, IRON, true) == 64, "64 iron held, got " + count(server, IRON, true));
+            context.runOnClient(mc -> check(StorageService.get().heldSlot() >= 0, "iron is held"));
+            plainClick(context, ironEntry);
+            waitForJobs(context);
+            check(count(server, IRON, true) == 0, "held iron stored again");
+            check(count(server, IRON, false) == 90, "iron neither lost nor duplicated (cursor)");
+
             context.runOnClient(mc -> mc.gui.setScreen(null));
             context.waitTicks(10);
             boolean clean = server.computeOnServer(s -> {
@@ -127,6 +138,14 @@ public final class MultiplayerGameTest implements FabricClientGameTest {
         check(index >= 0, itemId + " in the inventory");
         int[] c = context.computeOnClient(mc -> ((TerminalScreen) mc.gui.screen()).inventorySlotCenter(index));
         altClick(context, c);
+    }
+
+    private static void plainClick(ClientGameTestContext context, int[] guiPos) {
+        double scale = context.computeOnClient(mc -> mc.getWindow().getGuiScale());
+        context.getInput().setCursorPos(guiPos[0] * scale, guiPos[1] * scale);
+        context.waitTick();
+        context.getInput().pressMouse(InputConstants.MOUSE_BUTTON_LEFT);
+        context.waitTick();
     }
 
     private static void altClick(ClientGameTestContext context, int[] guiPos) {

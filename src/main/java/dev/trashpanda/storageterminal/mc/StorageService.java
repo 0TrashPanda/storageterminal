@@ -33,6 +33,7 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.protocol.game.ServerboundContainerClosePacket;
 import net.minecraft.world.inventory.AbstractContainerMenu;
+import net.minecraft.world.inventory.ContainerInput;
 import net.minecraft.world.inventory.MenuType;
 import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.ItemStack;
@@ -107,6 +108,33 @@ public final class StorageService {
 
     private final Deque<Queued> queued = new ArrayDeque<>();
 
+    // The cursor in the terminal (SPEC 12b). A held stack never sits on the real cursor between
+    // clicks: it stays in an inventory slot (heldSlot) and is drawn at the mouse. Each click on it
+    // becomes real clicks in the player's own inventory menu, all sent at once: pick the stack up,
+    // do the player's click, put what is left back. Vanilla then handles placing, swapping,
+    // merging and bundles, and nothing can be dropped by a container closing.
+    private int heldSlot = -1;
+    /** Slot a take-to-cursor fills; it becomes the held slot when the take ends. */
+    private int cursorTakeSlot = -1;
+
+    /** A click on the held stack, waiting until no container of ours is open. */
+    private sealed interface CursorOp permits ClickOp, SplitOp, DropOp {
+    }
+
+    /** Held stack clicked onto inventory slot {@code target}. */
+    private record ClickOp(int target, boolean right) implements CursorOp {
+    }
+
+    /** Right-click on a stack with nothing held: pick up half. */
+    private record SplitOp(int target) implements CursorOp {
+    }
+
+    /** Click outside the panel: drop the held stack (right: one item). */
+    private record DropOp(boolean right) implements CursorOp {
+    }
+
+    private final Deque<CursorOp> cursorOps = new ArrayDeque<>();
+
     private StorageService() {
     }
 
@@ -166,6 +194,7 @@ public final class StorageService {
         if (minecraft.player == null || minecraft.level == null) {
             return;
         }
+        runCursorOps(minecraft);
         jobs.tick();
         continueWheel(minecraft);
         continueQueued(minecraft);
@@ -312,6 +341,12 @@ public final class StorageService {
 
     private void onTakeFinished(Minecraft minecraft, TakeJob.Result result) {
         save();
+        if (cursorTakeSlot >= 0 && minecraft.player != null) {
+            if (!minecraft.player.getInventory().getItem(cursorTakeSlot).isEmpty()) {
+                heldSlot = cursorTakeSlot;
+            }
+            cursorTakeSlot = -1;
+        }
         wheelFailed |= result.problem() != null;
         String took = "Took " + CountFormat.exact(result.moved());
         if (result.problem() == null) {
@@ -337,6 +372,190 @@ public final class StorageService {
         return feedback != null && System.currentTimeMillis() - feedback.atMillis() < FEEDBACK_MS ? feedback : null;
     }
 
+    // ---- cursor ------------------------------------------------------------------------
+
+    /** Inventory slot (0-35) of the held stack, or -1. Forgets it once the slot is empty. */
+    int heldSlot() {
+        Minecraft minecraft = Minecraft.getInstance();
+        if (heldSlot >= 0 && (minecraft.player == null || minecraft.player.getInventory().getItem(heldSlot).isEmpty())) {
+            heldSlot = -1;
+        }
+        return heldSlot;
+    }
+
+    /** The held stack (in its slot), or empty. */
+    ItemStack heldStack(Minecraft minecraft) {
+        int slot = heldSlot();
+        return slot < 0 || minecraft.player == null ? ItemStack.EMPTY : minecraft.player.getInventory().getItem(slot);
+    }
+
+    /** True while a take to the cursor or a click on the held stack is still on its way. */
+    boolean cursorBusy() {
+        return cursorTakeSlot >= 0 || !cursorOps.isEmpty();
+    }
+
+    /** Plain click on a grid entry with nothing held: a stack (or half) onto the cursor. */
+    void takeToCursor(Minecraft minecraft, ItemKey item, TakePlanner.Mode mode) {
+        if (cursorBusy()) {
+            return;
+        }
+        int park = emptySlot(minecraft, -1);
+        if (park < 0) {
+            showFeedback(minecraft, FeedbackKind.FAILED, "Inventory full: no free slot to hold items");
+            return;
+        }
+        if (startTake(minecraft, item, mode, 1, park)) {
+            cursorTakeSlot = park;
+        }
+    }
+
+    /** Plain click on the grid while holding: store the held stack (right: one item). */
+    void storeHeld(Minecraft minecraft, boolean one) {
+        int slot = heldSlot();
+        if (slot < 0 || cursorBusy()) {
+            return;
+        }
+        startPut(minecraft, List.of(slot), one ? 1 : PutOperator.WHOLE_STACKS, true);
+    }
+
+    /** Plain click on inventory slot {@code index}: pick up, place, swap or merge, like vanilla. */
+    void cursorClickInventory(Minecraft minecraft, int index, boolean right) {
+        if (minecraft.player == null || cursorTakeSlot >= 0) {
+            return;
+        }
+        if (heldSlot() < 0 && cursorOps.isEmpty()) {
+            ItemStack stack = minecraft.player.getInventory().getItem(index);
+            if (stack.isEmpty()) {
+                return;
+            }
+            if (!right || stack.getCount() == 1) {
+                heldSlot = index; // Picking a whole stack up needs no click: it stays where it is.
+                return;
+            }
+            cursorOps.addLast(new SplitOp(index));
+        } else {
+            cursorOps.addLast(new ClickOp(index, right));
+        }
+        runCursorOps(minecraft);
+    }
+
+    /** Click outside the panel while holding: drop it, like vanilla (right: one item). */
+    void dropHeld(Minecraft minecraft, boolean right) {
+        if (heldSlot() < 0 && cursorOps.isEmpty()) {
+            return;
+        }
+        cursorOps.addLast(new DropOp(right));
+        runCursorOps(minecraft);
+    }
+
+    /**
+     * Sends waiting cursor clicks, but only while none of our containers is open or opening:
+     * the clicks go to the player's own inventory menu, which the server only accepts then.
+     */
+    private void runCursorOps(Minecraft minecraft) {
+        LocalPlayer player = minecraft.player;
+        if (cursorOps.isEmpty() || player == null || minecraft.gameMode == null) {
+            return;
+        }
+        if (activeSession() != null || player.containerMenu != player.inventoryMenu) {
+            return;
+        }
+        while (!cursorOps.isEmpty()) {
+            CursorOp op = cursorOps.pollFirst();
+            if (!player.inventoryMenu.getCarried().isEmpty()) {
+                // Never expected: something is on the real cursor. Leave it to vanilla, do nothing.
+                StorageTerminal.LOGGER.warn("Cursor click skipped: {} is on the real cursor", player.inventoryMenu.getCarried());
+                cursorOps.clear();
+                return;
+            }
+            switch (op) {
+                case ClickOp click -> doClick(minecraft, click.target(), click.right());
+                case SplitOp split -> doSplit(minecraft, split.target());
+                case DropOp drop -> doDrop(minecraft, drop.right());
+            }
+        }
+    }
+
+    private void doClick(Minecraft minecraft, int target, boolean right) {
+        int held = heldSlot();
+        if (held < 0) {
+            return;
+        }
+        if (target == held) {
+            if (!right) {
+                heldSlot = -1; // Put down where it already is.
+                return;
+            }
+            // One item into its own slot; the rest needs another slot to stay held.
+            int park = emptySlot(minecraft, held);
+            if (park < 0) {
+                return;
+            }
+            click(minecraft, held, 0);
+            click(minecraft, held, 1);
+            click(minecraft, park, 0);
+            heldSlot = park;
+            return;
+        }
+        click(minecraft, held, 0);
+        click(minecraft, target, right ? 1 : 0);
+        putBack(minecraft, held);
+    }
+
+    private void doSplit(Minecraft minecraft, int target) {
+        int park = emptySlot(minecraft, target);
+        if (park < 0) {
+            showFeedback(minecraft, FeedbackKind.FAILED, "Inventory full: no free slot to hold items");
+            return;
+        }
+        click(minecraft, target, 1);
+        click(minecraft, park, 0);
+        heldSlot = park;
+    }
+
+    private void doDrop(Minecraft minecraft, boolean right) {
+        int held = heldSlot();
+        if (held < 0) {
+            return;
+        }
+        click(minecraft, held, 0);
+        clickMenuSlot(minecraft, AbstractContainerMenu.SLOT_CLICKED_OUTSIDE, right ? 1 : 0);
+        putBack(minecraft, held);
+    }
+
+    /** Whatever is still on the real cursor goes back to {@code slot} (empty: it was just picked up) and stays held. */
+    private void putBack(Minecraft minecraft, int slot) {
+        if (!minecraft.player.inventoryMenu.getCarried().isEmpty()) {
+            click(minecraft, slot, 0);
+        }
+        heldSlot = minecraft.player.getInventory().getItem(slot).isEmpty() ? -1 : slot;
+    }
+
+    /** A click on inventory slot {@code index} (0-35) in the player's own menu. */
+    private void click(Minecraft minecraft, int index, int button) {
+        clickMenuSlot(minecraft, PutOperator.menuSlotFor(minecraft, minecraft.player.inventoryMenu, index), button);
+    }
+
+    private void clickMenuSlot(Minecraft minecraft, int menuSlot, int button) {
+        minecraft.gameMode.handleContainerInput(minecraft.player.inventoryMenu.containerId, menuSlot, button,
+                ContainerInput.PICKUP, minecraft.player);
+    }
+
+    /** An empty slot to hold items in: main inventory first, then the hotbar; never {@code except}. */
+    private int emptySlot(Minecraft minecraft, int except) {
+        if (minecraft.player == null) {
+            return -1;
+        }
+        for (int pass = 0; pass < 2; pass++) {
+            for (int i = pass == 0 ? 9 : 0; i < (pass == 0 ? 36 : 9); i++) {
+                if (i != except && minecraft.player.getInventory().getItem(i).isEmpty()) {
+                    return i;
+                }
+            }
+        }
+        return -1;
+    }
+
     /** The take that runs, or is queued to run next (a job only starts on the next tick). */
     TakeJob runningTake() {
         return jobs.currentOrPending(TakeJob.class);
@@ -352,11 +571,18 @@ public final class StorageService {
      * name for one item type, else "items".
      */
     void startPut(Minecraft minecraft, List<Integer> inventorySlots) {
-        startPut(minecraft, inventorySlots, PutOperator.WHOLE_STACKS);
+        startPut(minecraft, inventorySlots, PutOperator.WHOLE_STACKS, false);
     }
 
-    /** Stores at most {@code limit} items. False if nothing started. */
     private boolean startPut(Minecraft minecraft, List<Integer> inventorySlots, long limit) {
+        return startPut(minecraft, inventorySlots, limit, false);
+    }
+
+    /**
+     * Stores at most {@code limit} items. The held stack is left alone unless {@code includeHeld}
+     * (Deposit all, Alt-click and the rest must not store what the player holds). False if nothing started.
+     */
+    private boolean startPut(Minecraft minecraft, List<Integer> inventorySlots, long limit, boolean includeHeld) {
         LocalPlayer player = minecraft.player;
         if (player == null || minecraft.level == null) {
             return false;
@@ -373,7 +599,7 @@ public final class StorageService {
         Map<ItemKey, ItemStack> types = new LinkedHashMap<>();
         for (int index : inventorySlots) {
             ItemStack stack = player.getInventory().getItem(index);
-            if (stack.isEmpty()) {
+            if (stack.isEmpty() || (index == heldSlot() && !includeHeld)) {
                 continue;
             }
             ItemKey key = ItemKeys.toKey(stack, minecraft.level.registryAccess());
@@ -620,6 +846,9 @@ public final class StorageService {
     /** The terminal closed: stop all work cleanly and save. */
     void onTerminalClosed() {
         clearWheel();
+        heldSlot = -1;
+        cursorTakeSlot = -1;
+        cursorOps.clear();
         jobs.cancelAll("terminal closed");
         save();
     }

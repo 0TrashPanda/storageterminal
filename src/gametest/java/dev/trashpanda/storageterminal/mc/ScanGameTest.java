@@ -21,6 +21,7 @@ import net.minecraft.client.gui.screens.ChatScreen;
 import net.minecraft.client.gui.screens.inventory.ContainerScreen;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.InteractionHand;
+import net.minecraft.world.item.ItemStack;
 
 /**
  * M1 acceptance test (SPEC section 11) in a real client with an integrated server: a test room
@@ -126,6 +127,7 @@ public final class ScanGameTest implements FabricClientGameTest {
             });
             terminalChecks(context, world);
             takeChecks(context, world);
+            cursorChecks(context, world);
             depositChecks(context, world);
         }
     }
@@ -144,7 +146,7 @@ public final class ScanGameTest implements FabricClientGameTest {
         // Gold: trapped chest C already has a partial gold stack, so the 5 gold go there.
         long goldTotal = serverCount(world, "minecraft:gold_ingot", false);
         long goldInC = serverCountAt(world, chestC, "minecraft:gold_ingot");
-        clickInventory(context, "minecraft:gold_ingot", Mod.NONE);
+        clickInventory(context, "minecraft:gold_ingot", Mod.SHIFT);
         context.takeScreenshot("m4-storing");
         waitForPut(context);
         check(serverCount(world, "minecraft:gold_ingot", true) == 0, "gold left the inventory");
@@ -154,7 +156,7 @@ public final class ScanGameTest implements FabricClientGameTest {
 
         // Iron: no container holds iron, so it goes to free space, never the ignored chest H.
         long ironTotal = serverCount(world, "minecraft:iron_ingot", false);
-        clickInventory(context, "minecraft:iron_ingot", Mod.NONE);
+        clickInventory(context, "minecraft:iron_ingot", Mod.SHIFT);
         waitForPut(context);
         check(serverCount(world, "minecraft:iron_ingot", true) == 0, "iron left the inventory");
         check(serverCount(world, "minecraft:iron_ingot", false) == ironTotal, "iron neither lost nor duplicated");
@@ -275,7 +277,7 @@ public final class ScanGameTest implements FabricClientGameTest {
         world.getServer().runCommand("give @a minecraft:dirt 10");
         context.waitTicks(3);
         long applesInH = serverCountAt(world, chestH, "minecraft:apple");
-        clickInventory(context, "minecraft:dirt", Mod.NONE);
+        clickInventory(context, "minecraft:dirt", Mod.SHIFT);
         waitForPut(context);
         check(serverCount(world, "minecraft:dirt", true) == 10, "dirt still in the inventory");
         check(serverCountAt(world, chestH, "minecraft:dirt") == 0, "ignored chest H not used, even when all else is full");
@@ -285,7 +287,7 @@ public final class ScanGameTest implements FabricClientGameTest {
         // After a rescan the cache knows it is full: refused before opening anything.
         context.runOnClient(mc -> StorageService.get().startTerminalScan(mc, true));
         context.waitFor(mc -> StorageService.get().runningScan() == null, 600);
-        clickInventory(context, "minecraft:dirt", Mod.NONE);
+        clickInventory(context, "minecraft:dirt", Mod.SHIFT);
         context.waitTicks(2);
         context.runOnClient(mc -> check(StorageService.get().runningPut() == null, "nothing to visit"));
         expectFeedback(context, StorageService.FeedbackKind.FAILED);
@@ -386,6 +388,140 @@ public final class ScanGameTest implements FabricClientGameTest {
                 "no container left open " + when + " (server " + server + ", client " + client + ")");
     }
 
+    /**
+     * SPEC 12b cursor: plain clicks hold items like a vanilla cursor. The held stack stays in an
+     * inventory slot (so it is counted there on the server) and every click on it is a real click.
+     */
+    private void cursorChecks(ClientGameTestContext context, TestSingleplayerContext world) {
+        context.getInput().pressKey(StorageTerminalClient.openTerminalKey());
+        context.waitForScreen(TerminalScreen.class);
+        context.waitFor(mc -> StorageService.get().runningScan() == null, 600);
+        String red = "minecraft:redstone";
+
+        // Click: a stack of redstone onto the cursor.
+        long redTotal = serverCount(world, red, false);
+        long redBefore = serverCount(world, red, true);
+        clickEntry(context, red, InputConstants.MOUSE_BUTTON_LEFT, Mod.NONE);
+        waitForCursor(context);
+        int held = heldSlot(context);
+        long took = serverCount(world, red, true) - redBefore;
+        check(held >= 0 && took > 0, "redstone held after a click (slot " + held + ", took " + took + ")");
+        check(countIf(serverSlot(world, held), red) == took, "the held redstone sits in its slot on the server");
+        check(serverCount(world, red, false) == redTotal, "redstone neither lost nor duplicated (take)");
+        context.takeScreenshot("12b-cursor-held");
+
+        // Right-click on the grid while holding stores one, a click stores the rest.
+        // Any grid slot will do while holding: the redstone entry may be gone (all of it held).
+        int[] anyGridSlot = context.computeOnClient(mc -> ((TerminalScreen) mc.gui.screen()).gridSlotCenter(0));
+        clickGui(context, anyGridSlot, InputConstants.MOUSE_BUTTON_RIGHT);
+        waitForCursor(context);
+        check(serverCount(world, red, true) == redBefore + took - 1, "right-click stored one redstone");
+        check(heldSlot(context) == held, "the rest is still held");
+        clickGui(context, anyGridSlot, InputConstants.MOUSE_BUTTON_LEFT);
+        waitForCursor(context);
+        check(serverCount(world, red, true) == redBefore, "click stored the held redstone");
+        check(heldSlot(context) == -1, "nothing held after storing");
+        check(serverCount(world, red, false) == redTotal, "redstone neither lost nor duplicated (store)");
+
+        // Pick up and swap, like vanilla. Inventory index 29 = sticks, 30 = feathers.
+        world.getServer().runCommand("item replace entity @a inventory.20 with minecraft:stick 10");
+        world.getServer().runCommand("item replace entity @a inventory.21 with minecraft:feather 6");
+        world.getServer().runCommand("item replace entity @a inventory.22 with minecraft:bundle");
+        context.waitFor(mc -> !mc.player.getInventory().getItem(29).isEmpty() && !mc.player.getInventory().getItem(30).isEmpty()
+                && !mc.player.getInventory().getItem(31).isEmpty(), 100);
+        clickSlot(context, 29, InputConstants.MOUSE_BUTTON_LEFT);
+        check(heldSlot(context) == 29, "sticks picked up");
+        clickSlot(context, 30, InputConstants.MOUSE_BUTTON_LEFT);
+        waitForCursor(context);
+        check(countIf(serverSlot(world, 30), "minecraft:stick") == 10 && countIf(serverSlot(world, 29), "minecraft:feather") == 6,
+                "sticks and feathers swapped on the server");
+        check(heldSlot(context) == 29, "the feathers are held now");
+        clickSlot(context, 29, InputConstants.MOUSE_BUTTON_LEFT);
+        check(heldSlot(context) == -1, "feathers put down");
+
+        // Right-click splits a stack: half held, half stays; a click merges it back.
+        clickSlot(context, 30, InputConstants.MOUSE_BUTTON_RIGHT);
+        waitForCursor(context);
+        int half = heldSlot(context);
+        check(half >= 0 && half != 30 && countIf(serverSlot(world, half), "minecraft:stick") == 5
+                && countIf(serverSlot(world, 30), "minecraft:stick") == 5, "right-click held half the sticks");
+        clickSlot(context, 30, InputConstants.MOUSE_BUTTON_LEFT);
+        waitForCursor(context);
+        check(countIf(serverSlot(world, 30), "minecraft:stick") == 10 && heldSlot(context) == -1, "sticks merged back");
+
+        // A held bundle clicked on a stack takes it in: vanilla's own bundle logic, through real clicks.
+        clickSlot(context, 31, InputConstants.MOUSE_BUTTON_LEFT);
+        clickSlot(context, 30, InputConstants.MOUSE_BUTTON_LEFT);
+        waitForCursor(context);
+        ItemStack bundle = serverSlot(world, 31);
+        int inBundle = bundle.getOrDefault(net.minecraft.core.component.DataComponents.BUNDLE_CONTENTS,
+                net.minecraft.world.item.component.BundleContents.EMPTY).itemCopies().mapToInt(ItemStack::getCount).sum();
+        check(serverSlot(world, 30).isEmpty() && inBundle == 10, "the bundle took the 10 sticks, has " + inBundle);
+        check(heldSlot(context) == 31, "the bundle is still held");
+        clickSlot(context, 31, InputConstants.MOUSE_BUTTON_LEFT);
+
+        // Clicking outside the panel drops the held stack, like vanilla.
+        clickSlot(context, 29, InputConstants.MOUSE_BUTTON_LEFT);
+        clickGui(context, new int[] {4, 4}, InputConstants.MOUSE_BUTTON_LEFT);
+        waitForCursor(context);
+        check(serverCount(world, "minecraft:feather", true) == 0, "feathers dropped");
+        long dropped = world.getServer().computeOnServer(server -> {
+            var player = server.getPlayerList().getPlayers().get(0);
+            return player.level().getEntitiesOfClass(net.minecraft.world.entity.item.ItemEntity.class,
+                    player.getBoundingBox().inflate(4)).stream().mapToLong(e -> countIf(e.getItem(), "minecraft:feather")).sum();
+        });
+        check(dropped == 6, "6 feathers lie on the ground, found " + dropped);
+        check(heldSlot(context) == -1, "nothing held after dropping");
+
+        world.getServer().runCommand("kill @e[type=item]");
+        world.getServer().runCommand("clear @a minecraft:bundle");
+        context.waitTicks(3);
+        context.runOnClient(mc -> check(mc.player.inventoryMenu.getCarried().isEmpty(), "client cursor empty"));
+        boolean serverCursorEmpty = world.getServer().computeOnServer(server ->
+                server.getPlayerList().getPlayers().get(0).inventoryMenu.getCarried().isEmpty());
+        check(serverCursorEmpty, "server cursor empty");
+        checkNoOpenContainer(context, world, "after cursor clicks");
+        context.runOnClient(mc -> mc.gui.setScreen(null));
+        context.waitTicks(2);
+    }
+
+    /** Puts the held stack down where it is (a click on its own slot), so the next grid click takes again. */
+    private void putDownHeld(ClientGameTestContext context) {
+        int held = heldSlot(context);
+        if (held >= 0) {
+            clickSlot(context, held, InputConstants.MOUSE_BUTTON_LEFT);
+            check(heldSlot(context) == -1, "held stack put down");
+        }
+    }
+
+    private static int heldSlot(ClientGameTestContext context) {
+        return context.computeOnClient(mc -> StorageService.get().heldSlot());
+    }
+
+    private static ItemStack serverSlot(TestSingleplayerContext world, int index) {
+        return world.getServer().computeOnServer(server ->
+                server.getPlayerList().getPlayers().get(0).getInventory().getItem(index).copy());
+    }
+
+    private void clickSlot(ClientGameTestContext context, int index, int button) {
+        int[] center = context.computeOnClient(mc -> ((TerminalScreen) mc.gui.screen()).inventorySlotCenter(index));
+        clickGui(context, center, button);
+    }
+
+    private static void clickGui(ClientGameTestContext context, int[] guiPos, int button) {
+        double scale = context.computeOnClient(mc -> mc.getWindow().getGuiScale());
+        context.getInput().setCursorPos(guiPos[0] * scale, guiPos[1] * scale);
+        context.waitTick();
+        context.getInput().pressMouse(button);
+        context.waitTick();
+    }
+
+    private static void waitForCursor(ClientGameTestContext context) {
+        context.waitFor(mc -> !StorageService.get().cursorBusy() && StorageService.get().runningTake() == null
+                && StorageService.get().runningPut() == null, 600);
+        context.waitTicks(5);
+    }
+
     private static void waitForJobs(ClientGameTestContext context) {
         context.waitFor(mc -> StorageService.get().runningTake() == null && StorageService.get().runningPut() == null, 600);
         context.waitTicks(5);
@@ -436,6 +572,7 @@ public final class ScanGameTest implements FabricClientGameTest {
         check(serverCount(world, "minecraft:iron_ingot", false) == ironTotal, "iron neither lost nor duplicated");
         expectFeedback(context, StorageService.FeedbackKind.SUCCESS);
         context.takeScreenshot("m3-took-iron");
+        putDownHeld(context);
 
         // Right click: half a stack of gold = 5 of 10 (A: 3, C: 7), so one stack is split.
         long goldTotal = serverCount(world, "minecraft:gold_ingot", false);
@@ -444,6 +581,7 @@ public final class ScanGameTest implements FabricClientGameTest {
         check(serverCount(world, "minecraft:gold_ingot", true) == 5, "5 gold in the inventory, got "
                 + serverCount(world, "minecraft:gold_ingot", true));
         check(serverCount(world, "minecraft:gold_ingot", false) == goldTotal, "gold neither lost nor duplicated");
+        putDownHeld(context);
 
         // Re-verify: someone empties half of double chest B after the scan. The cache still says 96.
         world.getServer().runCommand("item replace block " + at(0, 0, 2).getX() + " " + at(0, 0, 2).getY() + " "
