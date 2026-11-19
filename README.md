@@ -38,6 +38,8 @@ Put the Storage Terminal jar and Fabric API in your `mods` folder. Only you need
 
 Both keys can be changed in Options > Controls > Key Binds > Storage Terminal.
 
+While the terminal is open you don't hear the chests opening and closing (other players still do).
+
 What you hold in the terminal is really kept in a free slot of your inventory (it shows empty while you hold it). So closing the terminal never drops it, and taking onto the cursor needs one free slot.
 
 **Search:** type part of a name (`iron`), `@mod` for a mod (`@minecraft`), or `#tag` for an item tag (`#c:ingots`). Several words must all match.

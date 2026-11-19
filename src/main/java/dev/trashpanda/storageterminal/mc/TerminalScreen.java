@@ -520,6 +520,9 @@ public final class TerminalScreen extends Screen {
             drawSlot(g, xy[0], xy[1]);
             if (inventory != null) {
                 ItemStack stack = inventory.getItem(i);
+                if (i == service.incomingSlot() && i != held) {
+                    stack = service.incomingStack(); // A take into this slot: shown before it is done.
+                }
                 if (!stack.isEmpty() && i != held) { // The held stack is drawn at the mouse instead.
                     g.item(stack, xy[0] + 1, xy[1] + 1);
                     g.itemDecorations(font, stack, xy[0] + 1, xy[1] + 1);

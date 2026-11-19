@@ -503,8 +503,11 @@ public final class ScanGameTest implements FabricClientGameTest {
                 server.getPlayerList().getPlayers().get(0).inventoryMenu.getCarried().isEmpty());
         check(serverCursorEmpty, "server cursor empty");
         checkNoOpenContainer(context, world, "after cursor clicks");
+        net.minecraft.resources.Identifier chestOpen = net.minecraft.resources.Identifier.withDefaultNamespace("block.chest.open");
+        context.runOnClient(mc -> check(StorageService.get().shouldMute(chestOpen), "chest sounds muted with the terminal open"));
         context.runOnClient(mc -> mc.gui.setScreen(null));
         context.waitTicks(2);
+        context.runOnClient(mc -> check(!StorageService.get().shouldMute(chestOpen), "chest sounds back once it is closed"));
     }
 
     /** Puts the held stack down where it is (a click on its own slot), so the next grid click takes again. */

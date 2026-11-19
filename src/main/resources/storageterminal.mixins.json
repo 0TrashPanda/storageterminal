@@ -6,7 +6,8 @@
   "client": [
     "ClientPacketListenerMixin",
     "MenuScreensMixin",
-    "MultiPlayerGameModeMixin"
+    "MultiPlayerGameModeMixin",
+    "SoundManagerMixin"
   ],
   "injectors": {
     "defaultRequire": 1

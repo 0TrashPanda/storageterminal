@@ -136,6 +136,9 @@ public final class StorageService {
     private final Deque<CursorOp> cursorOps = new ArrayDeque<>();
     /** What a take-to-cursor will put on the cursor, shown there before the take is done. */
     private ItemStack cursorTakePreview = ItemStack.EMPTY;
+    /** A take into the inventory: the slot it fills and what that slot will hold, shown before it is done. */
+    private int incomingSlot = -1;
+    private ItemStack incomingPreview = ItemStack.EMPTY;
     /** The held stack is being stored: 0 none, -1 all of it, else this many items. */
     private long storingHeld;
 
@@ -343,9 +346,18 @@ public final class StorageService {
             showFeedback(minecraft, FeedbackKind.FAILED, "Inventory full");
             return false;
         }
+        if (preferredInventoryIndex < 0 && mode != TakePlanner.Mode.FILL) {
+            preferredInventoryIndex = targetSlot(player, reference, (int) amount);
+        }
         jobs.enqueue(new TakeJob(minecraft, cache, rateLimiter, config, item, reference, amount,
                 preferredInventoryIndex, stops, result -> onTakeFinished(minecraft, result), this::armLateOpenGuard));
         setPrediction(Map.of(item, -amount));
+        if (preferredInventoryIndex >= 0) {
+            ItemStack there = player.getInventory().getItem(preferredInventoryIndex);
+            int after = (int) Math.min(maxStack, amount + (ItemStack.isSameItemSameComponents(there, reference) ? there.getCount() : 0));
+            incomingSlot = preferredInventoryIndex;
+            incomingPreview = reference.copyWithCount(after);
+        }
         kickJobs();
         return true;
     }
@@ -360,6 +372,8 @@ public final class StorageService {
             cursorTakeSlot = -1;
         }
         cursorTakePreview = ItemStack.EMPTY;
+        incomingSlot = -1;
+        incomingPreview = ItemStack.EMPTY;
         wheelFailed |= result.problem() != null;
         String took = "Took " + CountFormat.exact(result.moved());
         if (result.problem() == null) {
@@ -609,6 +623,53 @@ public final class StorageService {
         minecraft.gameMode.handleContainerInput(minecraft.player.inventoryMenu.containerId, menuSlot, button,
                 ContainerInput.PICKUP, minecraft.player);
     }
+
+    /**
+     * A slot that takes {@code amount} of the item in one go: a stack of it with room (main
+     * inventory first), else an empty main slot, else an empty hotbar slot; -1 if none.
+     */
+    private static int targetSlot(LocalPlayer player, ItemStack reference, int amount) {
+        int empty = -1;
+        for (int pass = 0; pass < 2; pass++) {
+            for (int i = pass == 0 ? 9 : 0; i < (pass == 0 ? 36 : 9); i++) {
+                ItemStack stack = player.getInventory().getItem(i);
+                if (stack.isEmpty()) {
+                    if (empty < 0) {
+                        empty = i;
+                    }
+                } else if (ItemStack.isSameItemSameComponents(stack, reference)
+                        && stack.getCount() + amount <= stack.getMaxStackSize()) {
+                    return i;
+                }
+            }
+        }
+        return empty;
+    }
+
+    /** Inventory slot a running take fills, or -1 (see {@link #incomingStack()}). */
+    int incomingSlot() {
+        return incomingSlot;
+    }
+
+    /** What {@link #incomingSlot()} will hold when the take is done. */
+    ItemStack incomingStack() {
+        return incomingPreview;
+    }
+
+    /** Container open/close sounds are muted for us while the terminal is open or a job runs. */
+    public boolean shouldMute(net.minecraft.resources.Identifier sound) {
+        if (!MUTED_SOUNDS.contains(sound.toString())) {
+            return false;
+        }
+        Minecraft minecraft = Minecraft.getInstance();
+        return minecraft.gui.screen() instanceof TerminalScreen || jobs.isBusy();
+    }
+
+    private static final Set<String> MUTED_SOUNDS = Set.of(
+            "minecraft:block.chest.open", "minecraft:block.chest.close",
+            "minecraft:block.barrel.open", "minecraft:block.barrel.close",
+            "minecraft:block.shulker_box.open", "minecraft:block.shulker_box.close",
+            "minecraft:block.copper_chest.open", "minecraft:block.copper_chest.close");
 
     /** An empty slot to hold items in: main inventory first, then the hotbar; never {@code except}. */
     private int emptySlot(Minecraft minecraft, int except) {
@@ -934,6 +995,8 @@ public final class StorageService {
         heldSlot = -1;
         cursorTakeSlot = -1;
         cursorTakePreview = ItemStack.EMPTY;
+        incomingSlot = -1;
+        incomingPreview = ItemStack.EMPTY;
         storingHeld = 0;
         cursorOps.clear();
         clearPrediction();
