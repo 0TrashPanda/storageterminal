@@ -259,6 +259,31 @@ public final class ScanGameTest implements FabricClientGameTest {
         context.runOnClient(mc -> check(mc.player.containerMenu.getCarried().isEmpty(), "cursor empty after Shift-drag"));
         checkNoOpenContainer(context, world, "after Shift-drag");
 
+        // Out of range with moves queued: the rest is dropped with one message; nothing is lost.
+        world.getServer().runCommand("item replace entity @a inventory.10 with minecraft:brick 6");
+        world.getServer().runCommand("item replace entity @a inventory.11 with minecraft:paper 7");
+        world.getServer().runCommand("item replace entity @a inventory.12 with minecraft:book 2");
+        context.waitFor(mc -> !mc.player.getInventory().getItem(21).isEmpty(), 100);
+        context.runOnClient(mc -> {
+            StorageService.get().queueStore(mc, 19);
+            StorageService.get().queueStore(mc, 20);
+            StorageService.get().queueStore(mc, 21);
+        });
+        world.getServer().runCommand("execute as @a at @s run tp @s ~30 ~ ~");
+        waitForJobs(context);
+        context.runOnClient(mc -> {
+            StorageService.Feedback f = StorageService.get().feedback();
+            check(f != null && f.text().contains("Out of range") && f.text().contains("cancelled"),
+                    "out-of-range message, got " + (f == null ? "none" : f.text()));
+        });
+        world.getServer().runCommand("execute as @a at @s run tp @s ~-30 ~ ~");
+        context.waitTicks(10);
+        check(serverCount(world, "minecraft:paper", false) == 7 && serverCount(world, "minecraft:book", false) == 2
+                && serverCount(world, "minecraft:brick", false) == 6, "nothing lost when going out of range");
+        checkNoOpenContainer(context, world, "after going out of range");
+        context.runOnClient(mc -> StorageService.get().startTerminalScan(mc, true));
+        context.waitFor(mc -> StorageService.get().runningScan() == null, 600);
+
         // Deposit all: main inventory only, the hotbar stays.
         world.getServer().runCommand("item replace entity @a inventory.5 with minecraft:string 7");
         world.getServer().runCommand("item replace entity @a inventory.6 with minecraft:flint 3");
@@ -634,13 +659,17 @@ public final class ScanGameTest implements FabricClientGameTest {
         world.getServer().runCommand("clear @a minecraft:stone");
         context.waitTicks(3);
 
-        // Closing the terminal right after a click: the take stops cleanly, nothing left open or on the cursor.
+        // Closing the terminal right after a click: the take still finishes (the stack stays in its
+        // inventory slot, not held), nothing left open or on the cursor.
         long redstoneTotal = serverCount(world, "minecraft:redstone", false);
+        long redstoneHeldBefore = serverCount(world, "minecraft:redstone", true);
         clickEntry(context, "minecraft:redstone", InputConstants.MOUSE_BUTTON_LEFT, Mod.NONE);
         context.runOnClient(mc -> mc.gui.setScreen(null));
         context.waitTicks(40);
+        check(serverCount(world, "minecraft:redstone", true) > redstoneHeldBefore, "the take went on after closing the terminal");
         context.runOnClient(mc -> {
-            check(StorageService.get().runningTake() == null, "take stopped");
+            check(StorageService.get().runningTake() == null, "take done");
+            check(StorageService.get().heldSlot() == -1, "nothing held once the terminal is closed");
             check(mc.player.containerMenu == mc.player.inventoryMenu, "client has no container open");
             check(mc.player.containerMenu.getCarried().isEmpty(), "client cursor empty");
             check(!(mc.gui.screen() instanceof ContainerScreen), "no container screen");

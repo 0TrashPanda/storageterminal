@@ -40,6 +40,8 @@ Both keys can be changed in Options > Controls > Key Binds > Storage Terminal.
 
 While the terminal is open you don't hear the chests opening and closing (other players still do).
 
+Closing the terminal doesn't stop moves you started: they finish in the background and tell you the result above the hotbar. If you walk out of range with moves still waiting, those are cancelled and you get a message.
+
 What you hold in the terminal is really kept in a free slot of your inventory (it shows empty while you hold it). So closing the terminal never drops it, and taking onto the cursor needs one free slot.
 
 **Search:** type part of a name (`iron`), `@mod` for a mod (`@minecraft`), or `#tag` for an item tag (`#c:ingots`). Several words must all match.

@@ -113,7 +113,7 @@ final class TakeJob implements ContainerJob {
                 return Status.CANCELLED;
             }
             if (!ContainerDiscovery.stillInServerReach(player, session.target().openPos())) {
-                cancel("moved out of reach");
+                cancel(StorageService.OUT_OF_REACH);
                 return Status.CANCELLED;
             }
             session.tick(minecraft);

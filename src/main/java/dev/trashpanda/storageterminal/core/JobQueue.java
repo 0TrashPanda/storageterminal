@@ -67,6 +67,24 @@ public final class JobQueue {
         }
     }
 
+    /** Cancels the running job and drops the queued ones, but only jobs that match. */
+    public void cancelIf(java.util.function.Predicate<Job> which, String reason) {
+        Job job = current;
+        if (job != null && which.test(job)) {
+            current = null;
+            job.cancel(reason);
+            listener.finished(job, Job.Status.CANCELLED);
+        }
+        java.util.Iterator<Job> it = pending.iterator();
+        while (it.hasNext()) {
+            Job waiting = it.next();
+            if (which.test(waiting)) {
+                it.remove();
+                listener.finished(waiting, Job.Status.CANCELLED);
+            }
+        }
+    }
+
     /** Cancels the running job and drops everything queued. */
     public void cancelAll(String reason) {
         Job job = current;

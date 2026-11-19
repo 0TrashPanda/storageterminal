@@ -83,6 +83,21 @@ class SmallPartsTest {
     }
 
     @Test
+    void cancelIfStopsOnlyMatchingJobs() {
+        List<String> log = new java.util.ArrayList<>();
+        JobQueue queue = new JobQueue((job, status) -> log.add(job.name() + ":" + status));
+        CountingJob scan = new CountingJob("scan", 5, log);
+        CountingJob take = new CountingJob("take", 5, log);
+        queue.enqueue(scan);
+        queue.enqueue(take);
+        queue.tick();
+        queue.cancelIf(job -> job.name().equals("scan"), "terminal closed");
+        assertEquals(List.of("scan cancelled: terminal closed", "scan:CANCELLED"), log);
+        queue.tick();
+        assertEquals(1, take.ticks, "the take goes on");
+    }
+
+    @Test
     void queuedJobCountsBeforeItStarts() {
         JobQueue queue = new JobQueue((job, status) -> { });
         CountingJob job = new CountingJob("only", 1, new java.util.ArrayList<>());

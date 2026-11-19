@@ -84,6 +84,8 @@ public final class StorageService {
     }
 
     private static final long FEEDBACK_MS = 5000L;
+    /** The reason take and put jobs give when the player moved out of reach of the open container. */
+    static final String OUT_OF_REACH = "moved out of reach";
     private Feedback feedback;
 
     // Shift + wheel: one item per notch. Notches that arrive while a wheel job runs are added up
@@ -366,16 +368,22 @@ public final class StorageService {
         save();
         clearPrediction();
         if (cursorTakeSlot >= 0 && minecraft.player != null) {
-            if (!minecraft.player.getInventory().getItem(cursorTakeSlot).isEmpty()) {
+            if (terminalOpen() && !minecraft.player.getInventory().getItem(cursorTakeSlot).isEmpty()) {
                 heldSlot = cursorTakeSlot;
             }
             cursorTakeSlot = -1;
         }
+        storingHeld = 0;
         cursorTakePreview = ItemStack.EMPTY;
         incomingSlot = -1;
         incomingPreview = ItemStack.EMPTY;
         wheelFailed |= result.problem() != null;
         String took = "Took " + CountFormat.exact(result.moved());
+        if (stopsQueue(result.problem()) && queuedCount() > 0) {
+            dropQueue(minecraft, took + " of " + CountFormat.exact(result.wanted()) + " " + result.itemName(),
+                    OUT_OF_REACH.equals(result.problem()) ? "Out of range" : "Stopped (" + result.problem() + ")");
+            return;
+        }
         if (result.problem() == null) {
             showFeedback(minecraft, FeedbackKind.SUCCESS, took + " " + result.itemName());
         } else if (result.moved() > 0) {
@@ -944,6 +952,11 @@ public final class StorageService {
 
     /** Starts the next queued store or take once nothing else runs. */
     private void continueQueued(Minecraft minecraft) {
+        if (!queued.isEmpty() && idle() && !wheelJobRunning && minecraft.player != null && minecraft.level != null
+                && refreshReachable(minecraft).isEmpty()) {
+            dropQueueOutOfRange(minecraft, null); // Walked away between two moves.
+            return;
+        }
         while (!queued.isEmpty() && idle() && !wheelJobRunning && minecraft.player != null) {
             Queued next = queued.pollFirst();
             if (next instanceof QueuedStore store) {
@@ -970,6 +983,11 @@ public final class StorageService {
         storingHeld = 0;
         wheelFailed |= result.problem() != null;
         String stored = "Stored " + CountFormat.exact(result.moved());
+        if (stopsQueue(result.problem()) && queuedCount() > 0) {
+            dropQueue(minecraft, stored + " of " + CountFormat.exact(result.wanted()) + " " + result.what(),
+                    OUT_OF_REACH.equals(result.problem()) ? "Out of range" : "Stopped (" + result.problem() + ")");
+            return;
+        }
         if (result.problem() == null) {
             showFeedback(minecraft, FeedbackKind.SUCCESS, stored + " " + result.what());
         } else if (result.moved() > 0) {
@@ -990,18 +1008,57 @@ public final class StorageService {
     }
 
     /** The terminal closed: stop all work cleanly and save. */
+    /**
+     * The terminal closed. The scan stops, but takes and stores (running and queued) go on; their
+     * results show above the hotbar. The held stack simply stays in its slot.
+     */
     void onTerminalClosed() {
-        clearWheel();
         heldSlot = -1;
-        cursorTakeSlot = -1;
         cursorTakePreview = ItemStack.EMPTY;
         incomingSlot = -1;
         incomingPreview = ItemStack.EMPTY;
-        storingHeld = 0;
         cursorOps.clear();
         clearPrediction();
-        jobs.cancelAll("terminal closed");
+        jobs.cancelIf(job -> job instanceof ScanJob, "terminal closed");
         save();
+    }
+
+    /**
+     * Reasons a move stopped that would make every queued move fail too (out of range, and the
+     * job guard's reasons), as opposed to "no free space" or "inventory full" for one item.
+     */
+    private static boolean stopsQueue(String problem) {
+        return problem != null && (OUT_OF_REACH.equals(problem) || GUARD_STOPS.contains(problem));
+    }
+
+    private static final Set<String> GUARD_STOPS = Set.of("disconnected", "changed dimension", "died", "took damage",
+            "a screen was opened", "a screen is open", "the area was unloaded");
+
+    private boolean terminalOpen() {
+        return Minecraft.getInstance().gui.screen() instanceof TerminalScreen;
+    }
+
+    /** Moves still waiting after the current one: queued Shift-clicks and drags, and wheel notches. */
+    private int queuedCount() {
+        return queued.size() + (wheelQueued != 0 ? 1 : 0);
+    }
+
+    /**
+     * Out of range with moves still queued: drop them and say so once (they would only fail one
+     * by one). {@code lead} is the result of the move that just stopped, or null.
+     */
+    private void dropQueueOutOfRange(Minecraft minecraft, String lead) {
+        dropQueue(minecraft, lead, "Out of range");
+    }
+
+    /** Drops the queued moves with one message: "{why}: N queued moves cancelled". */
+    private void dropQueue(Minecraft minecraft, String lead, String why) {
+        int dropped = queuedCount();
+        queued.clear();
+        wheelQueued = 0;
+        wheelJobRunning = false;
+        String text = why + ": " + dropped + (dropped == 1 ? " queued move" : " queued moves") + " cancelled";
+        showFeedback(minecraft, FeedbackKind.FAILED, lead == null ? text : lead + ". " + text);
     }
 
     Set<ContainerKey> reachable() {
