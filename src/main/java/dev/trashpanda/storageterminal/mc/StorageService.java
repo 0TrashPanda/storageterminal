@@ -83,6 +83,14 @@ public final class StorageService {
     private static final long FEEDBACK_MS = 5000L;
     private Feedback feedback;
 
+    // Shift + wheel: one item per notch. Notches that arrive while a wheel job runs are added up
+    // (+ take, - store) and done as one job afterwards.
+    private boolean wheelJobRunning;
+    private ItemKey wheelItem;
+    private int wheelInventoryIndex = -1;
+    private int wheelQueued;
+    private boolean wheelFailed;
+
     private StorageService() {
     }
 
@@ -143,6 +151,7 @@ public final class StorageService {
             return;
         }
         jobs.tick();
+        continueWheel(minecraft);
         if (passiveMenu != null && minecraft.player.containerMenu != passiveMenu) {
             capturePassiveAndForget();
         }
@@ -216,22 +225,31 @@ public final class StorageService {
 
     /** Starts taking {@code item} for a grid click. Problems are reported through {@link #feedback()}. */
     void startTake(Minecraft minecraft, ItemKey item, TakePlanner.Mode mode) {
+        startTake(minecraft, item, mode, 1, -1);
+    }
+
+    /**
+     * {@code count} is used by {@link TakePlanner.Mode#ONE} only (wheel notches added up);
+     * {@code preferredInventoryIndex} is the stack to put the items on, or -1. False if nothing started.
+     */
+    private boolean startTake(Minecraft minecraft, ItemKey item, TakePlanner.Mode mode, long count,
+            int preferredInventoryIndex) {
         LocalPlayer player = minecraft.player;
         if (player == null || minecraft.level == null) {
-            return;
+            return false;
         }
         if (runningTake() != null || runningPut() != null) {
             showFeedback(minecraft, FeedbackKind.FAILED, "Busy: wait for the current job to finish");
-            return;
+            return false;
         }
         if (player.isSecondaryUseActive()) {
             showFeedback(minecraft, FeedbackKind.FAILED, "Stop sneaking to take items");
-            return;
+            return false;
         }
         ItemStack reference = ItemKeys.toStack(item, 1, minecraft.level.registryAccess());
         if (reference.isEmpty()) {
             showFeedback(minecraft, FeedbackKind.FAILED, "Unknown item " + item.itemId());
-            return;
+            return false;
         }
         int maxStack = reference.getMaxStackSize();
         List<SlotStack> inventory = new ArrayList<>(36);
@@ -262,19 +280,22 @@ public final class StorageService {
         String name = reference.getHoverName().getString();
         if (stored == 0) {
             showFeedback(minecraft, FeedbackKind.FAILED, "No " + name + " in reach");
-            return;
+            return false;
         }
-        long amount = TakePlanner.amountToTake(mode, stored, maxStack, room);
+        long amount = mode == TakePlanner.Mode.ONE ? Math.min(Math.min(count, stored), room)
+                : TakePlanner.amountToTake(mode, stored, maxStack, room);
         if (amount <= 0) {
             showFeedback(minecraft, FeedbackKind.FAILED, "Inventory full");
-            return;
+            return false;
         }
-        jobs.enqueue(new TakeJob(minecraft, cache, rateLimiter, config, item, reference, amount, stops,
-                result -> onTakeFinished(minecraft, result), this::armLateOpenGuard));
+        jobs.enqueue(new TakeJob(minecraft, cache, rateLimiter, config, item, reference, amount,
+                preferredInventoryIndex, stops, result -> onTakeFinished(minecraft, result), this::armLateOpenGuard));
+        return true;
     }
 
     private void onTakeFinished(Minecraft minecraft, TakeJob.Result result) {
         save();
+        wheelFailed |= result.problem() != null;
         String took = "Took " + CountFormat.exact(result.moved());
         if (result.problem() == null) {
             showFeedback(minecraft, FeedbackKind.SUCCESS, took + " " + result.itemName());
@@ -312,17 +333,22 @@ public final class StorageService {
      * name for one item type, else "items".
      */
     void startPut(Minecraft minecraft, List<Integer> inventorySlots) {
+        startPut(minecraft, inventorySlots, PutOperator.WHOLE_STACKS);
+    }
+
+    /** Stores at most {@code limit} items. False if nothing started. */
+    private boolean startPut(Minecraft minecraft, List<Integer> inventorySlots, long limit) {
         LocalPlayer player = minecraft.player;
         if (player == null || minecraft.level == null) {
-            return;
+            return false;
         }
         if (runningTake() != null || runningPut() != null) {
             showFeedback(minecraft, FeedbackKind.FAILED, "Busy: wait for the current job to finish");
-            return;
+            return false;
         }
         if (player.isSecondaryUseActive()) {
             showFeedback(minecraft, FeedbackKind.FAILED, "Stop sneaking to store items");
-            return;
+            return false;
         }
         List<PutJob.Request> requests = new ArrayList<>();
         Map<ItemKey, ItemStack> types = new LinkedHashMap<>();
@@ -337,7 +363,7 @@ public final class StorageService {
             types.putIfAbsent(key, reference);
         }
         if (requests.isEmpty()) {
-            return;
+            return false;
         }
         String what = types.size() == 1 ? types.values().iterator().next().getHoverName().getString() : "items";
 
@@ -370,18 +396,103 @@ public final class StorageService {
         }
         if (visitOrder.isEmpty()) {
             showFeedback(minecraft, FeedbackKind.FAILED, "No free space in reach");
-            return;
+            return false;
         }
         List<ContainerDiscovery.Target> visits = new ArrayList<>();
         for (ContainerKey key : visitOrder) {
             visits.add(byKey.get(key));
         }
-        jobs.enqueue(new PutJob(minecraft, cache, rateLimiter, config, requests, planned, visits, what,
+        jobs.enqueue(new PutJob(minecraft, cache, rateLimiter, config, requests, planned, visits, what, limit,
                 result -> onPutFinished(minecraft, result), this::armLateOpenGuard));
+        return true;
+    }
+
+    /**
+     * One Shift + wheel notch: {@code take} moves one {@code item} from storage into the inventory
+     * (onto {@code inventoryIndex} if it fits there), else one from the inventory into storage
+     * (from {@code inventoryIndex}, or the smallest stack of the item when -1).
+     */
+    void wheel(Minecraft minecraft, ItemKey item, boolean take, int inventoryIndex) {
+        if (wheelJobRunning && (runningTake() != null || runningPut() != null)) {
+            if (item.equals(wheelItem)) {
+                wheelQueued += take ? 1 : -1;
+            } else {
+                showFeedback(minecraft, FeedbackKind.FAILED, "Busy: wait for the current job to finish");
+            }
+            return;
+        }
+        startWheelJob(minecraft, item, take, 1, inventoryIndex);
+    }
+
+    private void startWheelJob(Minecraft minecraft, ItemKey item, boolean take, int count, int inventoryIndex) {
+        wheelItem = item;
+        wheelInventoryIndex = inventoryIndex;
+        wheelQueued = 0;
+        wheelFailed = false;
+        boolean started;
+        if (take) {
+            started = startTake(minecraft, item, TakePlanner.Mode.ONE, count, inventoryIndex);
+        } else {
+            int from = storeSourceSlot(minecraft, item, inventoryIndex);
+            if (from < 0) {
+                ItemStack reference = ItemKeys.toStack(item, 1, minecraft.level.registryAccess());
+                showFeedback(minecraft, FeedbackKind.FAILED, "No " + reference.getHoverName().getString() + " in your inventory");
+                started = false;
+            } else {
+                started = startPut(minecraft, List.of(from), count);
+            }
+        }
+        wheelJobRunning = started;
+    }
+
+    /** The given slot if it holds the item, else the smallest stack of it (main inventory before hotbar). */
+    private int storeSourceSlot(Minecraft minecraft, ItemKey item, int inventoryIndex) {
+        LocalPlayer player = minecraft.player;
+        if (player == null || minecraft.level == null) {
+            return -1;
+        }
+        if (inventoryIndex >= 0) {
+            ItemStack stack = player.getInventory().getItem(inventoryIndex);
+            return !stack.isEmpty() && ItemKeys.toKey(stack, minecraft.level.registryAccess()).equals(item)
+                    ? inventoryIndex : -1;
+        }
+        int best = -1;
+        int bestRank = Integer.MAX_VALUE;
+        for (int i = 0; i < 36; i++) {
+            ItemStack stack = player.getInventory().getItem(i);
+            if (stack.isEmpty() || !ItemKeys.toKey(stack, minecraft.level.registryAccess()).equals(item)) {
+                continue;
+            }
+            int rank = stack.getCount() + (i < 9 ? 1000 : 0);
+            if (rank < bestRank) {
+                best = i;
+                bestRank = rank;
+            }
+        }
+        return best;
+    }
+
+    /** After a wheel job ends: do the notches that came in meanwhile, unless it went wrong. */
+    private void continueWheel(Minecraft minecraft) {
+        if (!wheelJobRunning || runningTake() != null || runningPut() != null) {
+            return;
+        }
+        wheelJobRunning = false;
+        int queued = wheelQueued;
+        wheelQueued = 0;
+        if (queued != 0 && !wheelFailed && wheelItem != null) {
+            startWheelJob(minecraft, wheelItem, queued > 0, Math.abs(queued), wheelInventoryIndex);
+        }
+    }
+
+    private void clearWheel() {
+        wheelJobRunning = false;
+        wheelQueued = 0;
     }
 
     private void onPutFinished(Minecraft minecraft, PutJob.Result result) {
         save();
+        wheelFailed |= result.problem() != null;
         String stored = "Stored " + CountFormat.exact(result.moved());
         if (result.problem() == null) {
             showFeedback(minecraft, FeedbackKind.SUCCESS, stored + " " + result.what());
@@ -404,6 +515,7 @@ public final class StorageService {
 
     /** The terminal closed: stop all work cleanly and save. */
     void onTerminalClosed() {
+        clearWheel();
         jobs.cancelAll("terminal closed");
         save();
     }
@@ -445,6 +557,7 @@ public final class StorageService {
     }
 
     void cancelJobs(String reason) {
+        clearWheel();
         jobs.cancelAll(reason);
     }
 

@@ -48,7 +48,7 @@ public final class MultiplayerGameTest implements FabricClientGameTest {
             context.runOnClient(mc -> check(total((TerminalScreen) mc.gui.screen(), IRON) == 90, "terminal shows 90 iron"));
             context.takeScreenshot("m5-multiplayer-terminal");
 
-            // Take everything (shift-click), then store it all back (shift-click in the inventory).
+            // Take everything (Alt-click), then store it all back (Alt-click in the inventory).
             clickEntry(context, IRON);
             context.waitFor(mc -> StorageService.get().runningTake() == null, 600);
             context.waitTicks(10);
@@ -62,6 +62,15 @@ public final class MultiplayerGameTest implements FabricClientGameTest {
             check(count(server, IRON, false) == 90, "iron neither lost nor duplicated");
             context.takeScreenshot("m5-multiplayer-stored");
 
+            // Shift + wheel: one down takes 1 iron, one up stores it again (pick up, right-click, put back).
+            scrollEntry(context, IRON, -1);
+            waitForJobs(context);
+            check(count(server, IRON, true) == 1, "1 iron taken by Shift + wheel, got " + count(server, IRON, true));
+            scrollEntry(context, IRON, 1);
+            waitForJobs(context);
+            check(count(server, IRON, true) == 0, "the iron stored again by Shift + wheel");
+            check(count(server, IRON, false) == 90, "iron neither lost nor duplicated");
+
             context.runOnClient(mc -> mc.gui.setScreen(null));
             context.waitTicks(10);
             boolean clean = server.computeOnServer(s -> {
@@ -73,6 +82,26 @@ public final class MultiplayerGameTest implements FabricClientGameTest {
     }
 
     private void clickEntry(ClientGameTestContext context, String itemId) {
+        altClick(context, entryCenter(context, itemId));
+    }
+
+    private void scrollEntry(ClientGameTestContext context, String itemId, double amount) {
+        int[] c = entryCenter(context, itemId);
+        double scale = context.computeOnClient(mc -> mc.getWindow().getGuiScale());
+        context.getInput().setCursorPos(c[0] * scale, c[1] * scale);
+        context.waitTick();
+        context.getInput().holdShift();
+        context.getInput().scroll(amount);
+        context.getInput().releaseShift();
+        context.waitTick();
+    }
+
+    private static void waitForJobs(ClientGameTestContext context) {
+        context.waitFor(mc -> StorageService.get().runningTake() == null && StorageService.get().runningPut() == null, 600);
+        context.waitTicks(10);
+    }
+
+    private int[] entryCenter(ClientGameTestContext context, String itemId) {
         int index = context.computeOnClient(mc -> {
             List<StorageIndex.Entry> shown = ((TerminalScreen) mc.gui.screen()).shownEntries();
             for (int i = 0; i < shown.size(); i++) {
@@ -83,8 +112,7 @@ public final class MultiplayerGameTest implements FabricClientGameTest {
             return -1;
         });
         check(index >= 0, itemId + " shown");
-        int[] c = context.computeOnClient(mc -> ((TerminalScreen) mc.gui.screen()).gridSlotCenter(index));
-        shiftClick(context, c);
+        return context.computeOnClient(mc -> ((TerminalScreen) mc.gui.screen()).gridSlotCenter(index));
     }
 
     private void clickInventory(ClientGameTestContext context, String itemId) {
@@ -98,16 +126,16 @@ public final class MultiplayerGameTest implements FabricClientGameTest {
         });
         check(index >= 0, itemId + " in the inventory");
         int[] c = context.computeOnClient(mc -> ((TerminalScreen) mc.gui.screen()).inventorySlotCenter(index));
-        shiftClick(context, c);
+        altClick(context, c);
     }
 
-    private static void shiftClick(ClientGameTestContext context, int[] guiPos) {
+    private static void altClick(ClientGameTestContext context, int[] guiPos) {
         double scale = context.computeOnClient(mc -> mc.getWindow().getGuiScale());
         context.getInput().setCursorPos(guiPos[0] * scale, guiPos[1] * scale);
         context.waitTick();
-        context.getInput().holdShift();
+        context.getInput().holdAlt();
         context.getInput().pressMouse(InputConstants.MOUSE_BUTTON_LEFT);
-        context.getInput().releaseShift();
+        context.getInput().releaseAlt();
         context.waitTick();
     }
 

@@ -144,7 +144,7 @@ public final class ScanGameTest implements FabricClientGameTest {
         // Gold: trapped chest C already has a partial gold stack, so the 5 gold go there.
         long goldTotal = serverCount(world, "minecraft:gold_ingot", false);
         long goldInC = serverCountAt(world, chestC, "minecraft:gold_ingot");
-        clickInventory(context, "minecraft:gold_ingot", false);
+        clickInventory(context, "minecraft:gold_ingot", Mod.NONE);
         context.takeScreenshot("m4-storing");
         waitForPut(context);
         check(serverCount(world, "minecraft:gold_ingot", true) == 0, "gold left the inventory");
@@ -154,18 +154,52 @@ public final class ScanGameTest implements FabricClientGameTest {
 
         // Iron: no container holds iron, so it goes to free space, never the ignored chest H.
         long ironTotal = serverCount(world, "minecraft:iron_ingot", false);
-        clickInventory(context, "minecraft:iron_ingot", false);
+        clickInventory(context, "minecraft:iron_ingot", Mod.NONE);
         waitForPut(context);
         check(serverCount(world, "minecraft:iron_ingot", true) == 0, "iron left the inventory");
         check(serverCount(world, "minecraft:iron_ingot", false) == ironTotal, "iron neither lost nor duplicated");
         check(serverCountAt(world, chestH, "minecraft:iron_ingot") == 0, "ignored chest H not used");
 
-        // Shift-click: every cobblestone stack.
+        // Shift + wheel: one gold per notch. Two down over the grid entry (the second arrives while the
+        // first job runs and is queued), then one up over the inventory stack.
+        long goldNow = serverCount(world, "minecraft:gold_ingot", false);
+        int[] goldEntry = context.computeOnClient(mc -> {
+            List<StorageIndex.Entry> shown = ((TerminalScreen) mc.gui.screen()).shownEntries();
+            for (int i = 0; i < shown.size(); i++) {
+                if (shown.get(i).item().itemId().equals("minecraft:gold_ingot")) {
+                    return ((TerminalScreen) mc.gui.screen()).gridSlotCenter(i);
+                }
+            }
+            return null;
+        });
+        check(goldEntry != null, "gold is shown in the terminal");
+        shiftScrollAt(context, goldEntry, -1);
+        shiftScrollAt(context, goldEntry, -1);
+        waitForJobs(context);
+        check(serverCount(world, "minecraft:gold_ingot", true) == 2, "2 gold taken by Shift + wheel, got "
+                + serverCount(world, "minecraft:gold_ingot", true));
+        int goldSlot = inventoryIndexOf(context, "minecraft:gold_ingot");
+        int[] goldStack = context.computeOnClient(mc -> ((TerminalScreen) mc.gui.screen()).inventorySlotCenter(goldSlot));
+        shiftScrollAt(context, goldStack, 1);
+        waitForJobs(context);
+        check(serverCount(world, "minecraft:gold_ingot", true) == 1, "1 gold stored by Shift + wheel, 1 left, got "
+                + serverCount(world, "minecraft:gold_ingot", true));
+        check(serverCount(world, "minecraft:gold_ingot", false) == goldNow, "gold neither lost nor duplicated (wheel)");
+        context.runOnClient(mc -> check(mc.player.containerMenu.getCarried().isEmpty(), "cursor empty after wheel"));
+
+        // Shift-click stores one stack only; Alt-click then stores every cobblestone stack.
         world.getServer().runCommand("give @a minecraft:cobblestone 100");
         context.waitTicks(3);
         long cobbleTotal = serverCount(world, "minecraft:cobblestone", false);
         check(cobbleTotal == 132, "132 cobblestone before storing, got " + cobbleTotal);
-        clickInventory(context, "minecraft:cobblestone", true);
+        long cobbleHeld = serverCount(world, "minecraft:cobblestone", true);
+        int firstCobble = inventoryIndexOf(context, "minecraft:cobblestone");
+        int firstCobbleCount = context.computeOnClient(mc -> mc.player.getInventory().getItem(firstCobble).getCount());
+        clickInventory(context, "minecraft:cobblestone", Mod.SHIFT);
+        waitForPut(context);
+        check(serverCount(world, "minecraft:cobblestone", true) == cobbleHeld - firstCobbleCount,
+                "Shift-click stored just one stack");
+        clickInventory(context, "minecraft:cobblestone", Mod.ALT);
         waitForPut(context);
         check(serverCount(world, "minecraft:cobblestone", true) == 0, "all cobblestone stacks stored");
         check(serverCount(world, "minecraft:cobblestone", false) == cobbleTotal, "cobblestone neither lost nor duplicated");
@@ -195,7 +229,7 @@ public final class ScanGameTest implements FabricClientGameTest {
         world.getServer().runCommand("give @a minecraft:dirt 10");
         context.waitTicks(3);
         long applesInH = serverCountAt(world, chestH, "minecraft:apple");
-        clickInventory(context, "minecraft:dirt", false);
+        clickInventory(context, "minecraft:dirt", Mod.NONE);
         waitForPut(context);
         check(serverCount(world, "minecraft:dirt", true) == 10, "dirt still in the inventory");
         check(serverCountAt(world, chestH, "minecraft:dirt") == 0, "ignored chest H not used, even when all else is full");
@@ -205,7 +239,7 @@ public final class ScanGameTest implements FabricClientGameTest {
         // After a rescan the cache knows it is full: refused before opening anything.
         context.runOnClient(mc -> StorageService.get().startTerminalScan(mc, true));
         context.waitFor(mc -> StorageService.get().runningScan() == null, 600);
-        clickInventory(context, "minecraft:dirt", false);
+        clickInventory(context, "minecraft:dirt", Mod.NONE);
         context.waitTicks(2);
         context.runOnClient(mc -> check(StorageService.get().runningPut() == null, "nothing to visit"));
         expectFeedback(context, StorageService.FeedbackKind.FAILED);
@@ -215,7 +249,44 @@ public final class ScanGameTest implements FabricClientGameTest {
         context.runOnClient(mc -> mc.gui.setScreen(null));
     }
 
-    private void clickInventory(ClientGameTestContext context, String itemId, boolean shift) {
+    /** Modifier key held during a test click. */
+    private enum Mod {
+        NONE,
+        SHIFT,
+        ALT
+    }
+
+    private static void holdMod(ClientGameTestContext context, Mod mod) {
+        switch (mod) {
+            case SHIFT -> context.getInput().holdShift();
+            case ALT -> context.getInput().holdAlt();
+            default -> {
+            }
+        }
+    }
+
+    private static void releaseMod(ClientGameTestContext context, Mod mod) {
+        switch (mod) {
+            case SHIFT -> context.getInput().releaseShift();
+            case ALT -> context.getInput().releaseAlt();
+            default -> {
+            }
+        }
+    }
+
+    private void clickInventory(ClientGameTestContext context, String itemId, Mod mod) {
+        int index = inventoryIndexOf(context, itemId);
+        double scale = context.computeOnClient(mc -> mc.getWindow().getGuiScale());
+        int[] center = context.computeOnClient(mc -> ((TerminalScreen) mc.gui.screen()).inventorySlotCenter(index));
+        context.getInput().setCursorPos(center[0] * scale, center[1] * scale);
+        context.waitTick();
+        holdMod(context, mod);
+        context.getInput().pressMouse(InputConstants.MOUSE_BUTTON_LEFT);
+        releaseMod(context, mod);
+        context.waitTick();
+    }
+
+    private int inventoryIndexOf(ClientGameTestContext context, String itemId) {
         int index = context.computeOnClient(mc -> {
             for (int i = 0; i < 36; i++) {
                 if (countIf(mc.player.getInventory().getItem(i), itemId) > 0) {
@@ -225,18 +296,23 @@ public final class ScanGameTest implements FabricClientGameTest {
             return -1;
         });
         check(index >= 0, itemId + " is in the inventory");
+        return index;
+    }
+
+    /** Shift + wheel at a GUI position: positive {@code amount} is wheel up. */
+    private static void shiftScrollAt(ClientGameTestContext context, int[] guiPos, double amount) {
         double scale = context.computeOnClient(mc -> mc.getWindow().getGuiScale());
-        int[] center = context.computeOnClient(mc -> ((TerminalScreen) mc.gui.screen()).inventorySlotCenter(index));
-        context.getInput().setCursorPos(center[0] * scale, center[1] * scale);
+        context.getInput().setCursorPos(guiPos[0] * scale, guiPos[1] * scale);
         context.waitTick();
-        if (shift) {
-            context.getInput().holdShift();
-        }
-        context.getInput().pressMouse(InputConstants.MOUSE_BUTTON_LEFT);
-        if (shift) {
-            context.getInput().releaseShift();
-        }
+        context.getInput().holdShift();
+        context.getInput().scroll(amount);
+        context.getInput().releaseShift();
         context.waitTick();
+    }
+
+    private static void waitForJobs(ClientGameTestContext context) {
+        context.waitFor(mc -> StorageService.get().runningTake() == null && StorageService.get().runningPut() == null, 600);
+        context.waitTicks(5);
     }
 
     private void clickDepositAll(ClientGameTestContext context) {
@@ -276,7 +352,7 @@ public final class ScanGameTest implements FabricClientGameTest {
 
         // Left click: one stack of iron = all 18, spread over chest A (10), double chest B (5), barrel D (3).
         long ironTotal = serverCount(world, "minecraft:iron_ingot", false);
-        clickEntry(context, "minecraft:iron_ingot", InputConstants.MOUSE_BUTTON_LEFT, false);
+        clickEntry(context, "minecraft:iron_ingot", InputConstants.MOUSE_BUTTON_LEFT, Mod.NONE);
         context.takeScreenshot("m3-taking");
         waitForTake(context);
         check(serverCount(world, "minecraft:iron_ingot", true) == 18, "18 iron in the inventory, got "
@@ -287,7 +363,7 @@ public final class ScanGameTest implements FabricClientGameTest {
 
         // Right click: half a stack of gold = 5 of 10 (A: 3, C: 7), so one stack is split.
         long goldTotal = serverCount(world, "minecraft:gold_ingot", false);
-        clickEntry(context, "minecraft:gold_ingot", InputConstants.MOUSE_BUTTON_RIGHT, false);
+        clickEntry(context, "minecraft:gold_ingot", InputConstants.MOUSE_BUTTON_RIGHT, Mod.NONE);
         waitForTake(context);
         check(serverCount(world, "minecraft:gold_ingot", true) == 5, "5 gold in the inventory, got "
                 + serverCount(world, "minecraft:gold_ingot", true));
@@ -297,7 +373,7 @@ public final class ScanGameTest implements FabricClientGameTest {
         world.getServer().runCommand("item replace block " + at(0, 0, 2).getX() + " " + at(0, 0, 2).getY() + " "
                 + at(0, 0, 2).getZ() + " container.0 with minecraft:air");
         context.waitTicks(3);
-        clickEntry(context, "minecraft:cobblestone", InputConstants.MOUSE_BUTTON_LEFT, true);
+        clickEntry(context, "minecraft:cobblestone", InputConstants.MOUSE_BUTTON_LEFT, Mod.ALT);
         waitForTake(context);
         check(serverCount(world, "minecraft:cobblestone", true) == 32, "took the 32 that are really there, got "
                 + serverCount(world, "minecraft:cobblestone", true));
@@ -310,7 +386,7 @@ public final class ScanGameTest implements FabricClientGameTest {
         // Full inventory: nothing moves, the player is told.
         world.getServer().runCommand("give @a minecraft:stone 2112");
         context.waitTicks(3);
-        clickEntry(context, "minecraft:diamond", InputConstants.MOUSE_BUTTON_LEFT, false);
+        clickEntry(context, "minecraft:diamond", InputConstants.MOUSE_BUTTON_LEFT, Mod.NONE);
         context.waitTicks(3);
         waitForTake(context);
         check(serverCount(world, "minecraft:diamond", true) == 0, "no diamond taken into a full inventory");
@@ -321,7 +397,7 @@ public final class ScanGameTest implements FabricClientGameTest {
 
         // Closing the terminal right after a click: the take stops cleanly, nothing left open or on the cursor.
         long redstoneTotal = serverCount(world, "minecraft:redstone", false);
-        clickEntry(context, "minecraft:redstone", InputConstants.MOUSE_BUTTON_LEFT, false);
+        clickEntry(context, "minecraft:redstone", InputConstants.MOUSE_BUTTON_LEFT, Mod.NONE);
         context.runOnClient(mc -> mc.gui.setScreen(null));
         context.waitTicks(40);
         context.runOnClient(mc -> {
@@ -338,7 +414,7 @@ public final class ScanGameTest implements FabricClientGameTest {
         check(serverCount(world, "minecraft:redstone", false) == redstoneTotal, "redstone neither lost nor duplicated");
     }
 
-    private void clickEntry(ClientGameTestContext context, String itemId, int button, boolean shift) {
+    private void clickEntry(ClientGameTestContext context, String itemId, int button, Mod mod) {
         int index = context.computeOnClient(mc -> {
             List<StorageIndex.Entry> shown = ((TerminalScreen) mc.gui.screen()).shownEntries();
             for (int i = 0; i < shown.size(); i++) {
@@ -353,13 +429,9 @@ public final class ScanGameTest implements FabricClientGameTest {
         int[] center = context.computeOnClient(mc -> ((TerminalScreen) mc.gui.screen()).gridSlotCenter(index));
         context.getInput().setCursorPos(center[0] * scale, center[1] * scale);
         context.waitTick();
-        if (shift) {
-            context.getInput().holdShift();
-        }
+        holdMod(context, mod);
         context.getInput().pressMouse(button);
-        if (shift) {
-            context.getInput().releaseShift();
-        }
+        releaseMod(context, mod);
         context.waitTick();
     }
 

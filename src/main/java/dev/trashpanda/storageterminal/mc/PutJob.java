@@ -48,6 +48,8 @@ final class PutJob implements ContainerJob {
     private final Map<ItemKey, Integer> countAtStart = new LinkedHashMap<>();
     private final Map<ItemKey, ItemStack> references = new LinkedHashMap<>();
     private final long wanted;
+    /** At most this many items ({@link PutOperator#WHOLE_STACKS} for whole stacks). */
+    private final long limit;
 
     private ContainerSession session;
     private int unreachable;
@@ -55,7 +57,8 @@ final class PutJob implements ContainerJob {
 
     PutJob(Minecraft minecraft, StorageCache cache, RateLimiter rateLimiter, Config config, List<Request> requests,
             Map<ItemKey, Set<ContainerKey>> plannedStops, List<ContainerDiscovery.Target> visits, String what,
-            Consumer<Result> onFinished, Runnable onSessionEndedWithoutMenu) {
+            long limit, Consumer<Result> onFinished, Runnable onSessionEndedWithoutMenu) {
+        this.limit = limit;
         this.minecraft = minecraft;
         this.cache = cache;
         this.rateLimiter = rateLimiter;
@@ -76,7 +79,7 @@ final class PutJob implements ContainerJob {
         for (Map.Entry<ItemKey, ItemStack> e : references.entrySet()) {
             countAtStart.put(e.getKey(), TakeOperator.countInInventory(minecraft.player, e.getValue()));
         }
-        this.wanted = total;
+        this.wanted = Math.min(total, limit);
     }
 
     @Override
@@ -154,7 +157,7 @@ final class PutJob implements ContainerJob {
                 }
             }
         }
-        while (!visits.isEmpty()) {
+        while (!visits.isEmpty() && (limit == PutOperator.WHOLE_STACKS || moved() < limit)) {
             ContainerDiscovery.Target next = visits.peekFirst();
             Map<Integer, ItemStack> here = stacksFor(player, next.key());
             if (here.isEmpty()) {
@@ -178,7 +181,8 @@ final class PutJob implements ContainerJob {
             }
             visits.removeFirst();
             rateLimiter.recordOpen(tick, now);
-            session = new ContainerSession(next, config.syncTimeoutMs(), new PutOperator(here));
+            session = new ContainerSession(next, config.syncTimeoutMs(), new PutOperator(here,
+                    limit == PutOperator.WHOLE_STACKS ? limit : limit - moved()));
             guard.markOpened();
             session.start(minecraft);
             return Status.RUNNING;

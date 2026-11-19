@@ -26,6 +26,9 @@ class TakePlannerTest {
         assertEquals(8, TakePlanner.requested(TakePlanner.Mode.HALF, 100, 16), "ender pearls stack to 16");
         assertEquals(1, TakePlanner.requested(TakePlanner.Mode.HALF, 1, 1));
         assertEquals(1180, TakePlanner.requested(TakePlanner.Mode.FILL, 1180, 64));
+        assertEquals(1, TakePlanner.requested(TakePlanner.Mode.ONE, 1180, 64));
+        assertEquals(1, TakePlanner.requested(TakePlanner.Mode.ONE, 1, 1));
+        assertEquals(0, TakePlanner.amountToTake(TakePlanner.Mode.ONE, 50, 64, 0), "inventory full");
     }
 
     @Test

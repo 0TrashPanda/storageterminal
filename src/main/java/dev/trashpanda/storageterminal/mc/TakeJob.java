@@ -40,6 +40,7 @@ final class TakeJob implements ContainerJob {
     private final Runnable onSessionEndedWithoutMenu;
     private final JobGuard guard;
     private final int inventoryAtStart;
+    private final int preferredInventoryIndex;
 
     private ContainerSession session;
     private TakeOperator operator;
@@ -48,8 +49,9 @@ final class TakeJob implements ContainerJob {
     private boolean finished;
 
     TakeJob(Minecraft minecraft, StorageCache cache, RateLimiter rateLimiter, Config config, ItemKey item,
-            ItemStack reference, long wanted, List<ContainerDiscovery.Target> nearestFirst,
+            ItemStack reference, long wanted, int preferredInventoryIndex, List<ContainerDiscovery.Target> nearestFirst,
             Consumer<Result> onFinished, Runnable onSessionEndedWithoutMenu) {
+        this.preferredInventoryIndex = preferredInventoryIndex;
         this.minecraft = minecraft;
         this.cache = cache;
         this.rateLimiter = rateLimiter;
@@ -163,7 +165,7 @@ final class TakeJob implements ContainerJob {
             }
             stops.removeFirst();
             rateLimiter.recordOpen(tick, now);
-            operator = new TakeOperator(item, reference, remaining, next.found().slotCount());
+            operator = new TakeOperator(item, reference, remaining, next.found().slotCount(), preferredInventoryIndex);
             session = new ContainerSession(next, config.syncTimeoutMs(), operator);
             guard.markOpened();
             session.start(minecraft);

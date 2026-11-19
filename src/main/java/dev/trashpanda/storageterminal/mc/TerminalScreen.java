@@ -32,6 +32,7 @@ import net.minecraft.world.item.ItemStack;
  * The storage terminal (SPEC section 8, layout A from the approved mockups): search, sort and
  * rescan on top, then a status line, the aggregated item grid with a scrollbar, and the player's
  * inventory. Clicking a grid entry takes items (M3); clicking an inventory stack stores it (M4).
+ * Alt + click moves all of an item, Shift + wheel moves one (SPEC 12b).
  *
  * <p>Controls are placed by {@link #layout()} only, so they can move to a sidebar (layout B)
  * later without touching the rest.
@@ -523,7 +524,8 @@ public final class TerminalScreen extends Screen {
         }
         lines.add(Component.literal("Click: 1 stack \u00B7 Right-click: half")
                 .withStyle(ChatFormatting.GRAY, ChatFormatting.ITALIC));
-        lines.add(Component.literal("Shift-click: fill inventory").withStyle(ChatFormatting.GRAY, ChatFormatting.ITALIC));
+        lines.add(Component.literal("Alt-click: fill inventory \u00B7 Shift+wheel: 1")
+                .withStyle(ChatFormatting.GRAY, ChatFormatting.ITALIC));
         return lines;
     }
 
@@ -540,11 +542,41 @@ public final class TerminalScreen extends Screen {
 
     @Override
     public boolean mouseScrolled(double x, double y, double scrollX, double scrollY) {
+        // Some systems turn Shift + wheel into a sideways scroll.
+        double notch = scrollY != 0 ? scrollY : scrollX;
+        if (notch != 0 && minecraft.hasShiftDown() && wheelMove((int) x, (int) y, notch > 0)) {
+            return true;
+        }
         if (scrollY != 0) {
             scrollRow = Math.max(0, Math.min(maxScrollRow(), scrollRow - (int) Math.signum(scrollY)));
             return true;
         }
         return super.mouseScrolled(x, y, scrollX, scrollY);
+    }
+
+    /**
+     * Shift + wheel over a grid entry or an inventory stack: wheel up stores one, wheel down takes
+     * one (onto the stack under the mouse, when over the inventory). False if not over either.
+     */
+    private boolean wheelMove(int x, int y, boolean up) {
+        StorageIndex.Entry entry = entryAt(x, y);
+        if (entry != null) {
+            service.wheel(minecraft, entry.item(), !up, -1);
+            return true;
+        }
+        int inventoryIndex = inventoryIndexAt(x, y);
+        if (inventoryIndex >= 0 && minecraft.player != null && minecraft.level != null) {
+            ItemStack stack = minecraft.player.getInventory().getItem(inventoryIndex);
+            if (!stack.isEmpty()) {
+                service.wheel(minecraft, ItemKeys.toKey(stack, minecraft.level.registryAccess()), !up, inventoryIndex);
+            }
+            return true;
+        }
+        return gridSlotAt(x, y) >= 0;
+    }
+
+    private boolean altDown(MouseButtonEvent event) {
+        return event.hasAltDown() || minecraft.hasAltDown();
     }
 
     @Override
@@ -560,7 +592,7 @@ public final class TerminalScreen extends Screen {
                 ItemStack clicked = minecraft.player.getInventory().getItem(inventoryIndex);
                 if (!clicked.isEmpty()) {
                     List<Integer> slots = new ArrayList<>();
-                    if (event.hasShiftDown() || minecraft.hasShiftDown()) {
+                    if (altDown(event)) {
                         // Every stack of this item, main inventory and hotbar.
                         for (int i = 0; i < 36; i++) {
                             ItemStack other = minecraft.player.getInventory().getItem(i);
@@ -569,6 +601,7 @@ public final class TerminalScreen extends Screen {
                             }
                         }
                     } else {
+                        // Click and Shift + click: just this stack.
                         slots.add(inventoryIndex);
                     }
                     service.startPut(minecraft, slots);
@@ -583,7 +616,8 @@ public final class TerminalScreen extends Screen {
                 if (event.button() == InputConstants.MOUSE_BUTTON_RIGHT) {
                     mode = TakePlanner.Mode.HALF;
                 } else if (event.button() == InputConstants.MOUSE_BUTTON_LEFT) {
-                    mode = event.hasShiftDown() || minecraft.hasShiftDown() ? TakePlanner.Mode.FILL : TakePlanner.Mode.STACK;
+                    // Alt + click: all that fits. Click and Shift + click: one stack.
+                    mode = altDown(event) ? TakePlanner.Mode.FILL : TakePlanner.Mode.STACK;
                 } else {
                     return true;
                 }

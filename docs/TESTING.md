@@ -27,7 +27,8 @@ Set up a room with: a single chest, a double chest, a trapped chest, a barrel, a
 ### Take
 
 - [ ] Click: one stack (or all if less), taken from several containers if needed.
-- [ ] Right-click: half a stack. Shift-click: as much as fits.
+- [ ] Right-click: half a stack. Shift-click: one stack. Alt-click: as much as fits.
+- [ ] Shift + wheel down over an entry: 1 item per notch; quick notches are added up. Wheel up stores 1.
 - [ ] Change a chest by hand after the scan, then take from it: you get what is really there, the rest comes from other containers or is reported.
 - [ ] Full inventory: "Inventory full", nothing moves.
 - [ ] Cancel during a take: it stops, nothing is lost, nothing stays on the cursor.
@@ -35,7 +36,8 @@ Set up a room with: a single chest, a double chest, a trapped chest, a barrel, a
 ### Store
 
 - [ ] Click an inventory stack: it goes to a container with a partial stack of the same item first.
-- [ ] Shift-click: every stack of that item is stored.
+- [ ] Shift-click: only that stack is stored. Alt-click: every stack of that item is stored.
+- [ ] Shift + wheel over an inventory stack: up stores 1 of it, down adds 1 from storage to it. Cursor empty afterwards.
 - [ ] Deposit all: the main inventory is stored, the hotbar stays.
 - [ ] All containers full: "no free space", the items stay in the inventory.
 - [ ] Ignored container (**K**): never opened, never used, even when everything else is full. Press K again: used again.

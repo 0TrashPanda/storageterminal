@@ -38,6 +38,8 @@ final class TakeOperator implements ContainerSession.Operator {
     private final int maxStack;
     private final long wanted;
     private final int containerSlots;
+    /** Inventory index (0-35) to put the items on if it fits, or -1 for anywhere. */
+    private final int preferredInventoryIndex;
 
     private List<TakePlanner.SlotTake> takes;
     private int nextTake;
@@ -47,8 +49,9 @@ final class TakeOperator implements ContainerSession.Operator {
     private boolean inventoryFull;
     private boolean finished;
 
-    TakeOperator(ItemKey item, ItemStack reference, long wanted, int containerSlots) {
+    TakeOperator(ItemKey item, ItemStack reference, long wanted, int containerSlots, int preferredInventoryIndex) {
         this.item = item;
+        this.preferredInventoryIndex = preferredInventoryIndex;
         this.reference = reference;
         this.maxStack = reference.getMaxStackSize();
         this.wanted = wanted;
@@ -111,7 +114,7 @@ final class TakeOperator implements ContainerSession.Operator {
         int have = inSlot.getCount();
         int n = Math.min(take.count(), have);
         currentSource = take.slot();
-        if (n == have) {
+        if (n == have && preferredInventoryIndex < 0) {
             clicks.add(new Click(take.slot(), LEFT, ContainerInput.QUICK_MOVE));
             return;
         }
@@ -144,9 +147,19 @@ final class TakeOperator implements ContainerSession.Operator {
     /**
      * A player-inventory slot (menu index) that can take {@code n} of our item in one go: a stack of
      * the same item with room first, then an empty main-inventory slot, then an empty hotbar slot.
+     * The preferred slot (the stack the player scrolled over) wins if the items fit there.
      */
     private int inventoryTarget(Minecraft minecraft, AbstractContainerMenu menu, int n) {
         Inventory inventory = minecraft.player.getInventory();
+        if (preferredInventoryIndex >= 0) {
+            int preferred = PutOperator.menuSlotFor(minecraft, menu, preferredInventoryIndex);
+            if (preferred >= 0) {
+                ItemStack there = menu.slots.get(preferred).getItem();
+                if (there.isEmpty() || (isOurs(there) && there.getCount() + n <= maxStack)) {
+                    return preferred;
+                }
+            }
+        }
         int emptyMain = -1;
         int emptyHotbar = -1;
         for (int i = 0; i < menu.slots.size(); i++) {

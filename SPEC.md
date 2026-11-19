@@ -210,7 +210,7 @@ Execution mirrors Take: open, await sync, re-verify free space, move the stack w
 
 Hooks to leave now: extensible string-based tags, `StorageSource` abstraction, generic `JobQueue`, `ItemKey` that includes components, a version field in the cache schema.
 
-## 12b. Interaction improvements (after v1, do NOT implement yet)
+## 12b. Interaction improvements (after v1; Shift + wheel, Shift-click and Alt-click are implemented, the rest not yet)
 
 Feedback from the first manual play test (2026-11-18): the terminal's clicks work but feel limited. **Before designing any of this, compare how Refined Storage and AE2 handle each point** (their grid/terminal controls, modifier keys, what feels natural to players used to them) and write the chosen design here. Then decide with the user.
 

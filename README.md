@@ -20,11 +20,13 @@ Put the Storage Terminal jar and Fabric API in your `mods` folder. Only you need
 |---|---|
 | **B** | Open the terminal. It shows what is in every chest, trapped chest, barrel and placed shulker box in reach, then rescans them in the background. |
 | **K** (looking at a container) | Ignore it, or stop ignoring it. Ignored containers are never opened or used. |
-| Click an item | Take one stack (or all of it, if there is less). |
+| Click or Shift-click an item | Take one stack (or all of it, if there is less). |
 | Right-click an item | Take half a stack. |
-| Shift-click an item | Take as much as fits in your inventory. |
-| Click a stack in your inventory | Store it. |
-| Shift-click a stack in your inventory | Store every stack of that item. |
+| Alt-click an item | Take as much as fits in your inventory. |
+| Shift + wheel over an item | Wheel down takes 1, wheel up stores 1. |
+| Click or Shift-click a stack in your inventory | Store it. |
+| Alt-click a stack in your inventory | Store every stack of that item. |
+| Shift + wheel over a stack in your inventory | Wheel up stores 1 of it, wheel down takes 1 more onto it. |
 | **Deposit all** | Store your main inventory. The hotbar stays. |
 | **Scan** | Look into every container in reach again. |
 | **Cancel** | Stop the running take or store. |

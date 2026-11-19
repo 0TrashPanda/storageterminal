@@ -105,3 +105,13 @@ One line each: what, why. Newest at the bottom.
 - Lag: covered by `syncTimeoutMs` (late opens are closed by the late-open guard) and by waiting 2 ticks plus ping before reading a container back after clicks.
 - Multiplayer: a second in-game test runs scan, take-all and store-all against a dedicated server over a real connection (Fabric's `createServer()`); the mod is not loaded on the server. The 30-minute play session from the spec is in `docs/TESTING.md` as a manual step; it was not done here.
 - README rewritten for players (keys, clicks, search, settings table, commands, caveats: trapped chests, visible lid animations, anti-cheat). Manual checklist in `docs/TESTING.md`.
+
+## New controls (2026-11-19, SPEC 12b)
+
+- Alt-click moves all of an item (take: as much as fits; store: every stack of it). Shift-click now moves one stack, like a plain click for now; plain clicks are kept for the cursor design, which is not built yet.
+- Shift + wheel moves one item per notch. Up always stores, down always takes, over grid entries and inventory stacks alike. Sideways scroll counts too, since some systems turn Shift + wheel into it. Plain wheel only scrolls the grid.
+- Notches that come in while a wheel job runs (same item) are added up and done as one job right after; a different item while busy gets "Busy". A failed wheel job drops the queued notches.
+- Storing a limited number of items: pick the stack up, right-click single items into the container (partial stacks of it first, then empty slots, `Slot.mayPlace` respected), put the rest back where it came from. Cleanup puts the cursor back into that slot if anything goes wrong.
+- Taking onto a given stack: the take uses the pick-up/place path and places onto that inventory slot when the items fit there; else the usual target.
+- Wheel-up over a grid entry stores from the smallest stack of that item, main inventory before hotbar.
+- In-game tests: Shift + wheel take (two quick notches) and store with server-side counts; Shift-click stores one stack, Alt-click the rest; the dedicated-server test uses Alt-click and a Shift + wheel round trip.

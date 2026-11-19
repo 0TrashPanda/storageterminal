@@ -13,12 +13,14 @@ import java.util.List;
 public final class TakePlanner {
     /** What the click asked for. */
     public enum Mode {
-        /** Left click: one full stack, or all if there is less. */
+        /** Left click or Shift + left click: one full stack, or all if there is less. */
         STACK,
         /** Right click: half a stack, rounded up. */
         HALF,
-        /** Shift + left click: as much as fits in the inventory. */
-        FILL
+        /** Alt + left click: as much as fits in the inventory. */
+        FILL,
+        /** Shift + wheel: a single item. */
+        ONE
     }
 
     /** Take {@code count} items from slot {@code slot} of a container. */
@@ -52,6 +54,7 @@ public final class TakePlanner {
             case STACK -> oneStack;
             case HALF -> (oneStack + 1) / 2;
             case FILL -> stored;
+            case ONE -> Math.min(1, stored);
         };
     }
 
