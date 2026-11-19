@@ -39,6 +39,8 @@ Set up a room with: a single chest, a double chest, a trapped chest, a barrel, a
 
 - [ ] Shift-click an inventory stack: it goes to a container with a partial stack of the same item first.
 - [ ] Shift-click: only that stack is stored. Alt-click: every stack of that item is stored.
+- [ ] Counts are small, in the corner of each item. The grid fills the window height.
+- [ ] Holding Shift: Shift-clicking items down to nothing leaves them in place with a red 0 and the grid does not re-sort; letting go of Shift tidies up.
 - [ ] Shift-drag over several inventory stacks: each is dimmed, then stored. Over several grid entries: a stack of each is taken. Closing the terminal mid-drag stops the rest.
 - [ ] Shift + wheel over an inventory stack: up stores 1 of it, down adds 1 from storage to it. Cursor empty afterwards.
 - [ ] Deposit all: the main inventory is stored, the hotbar stays.

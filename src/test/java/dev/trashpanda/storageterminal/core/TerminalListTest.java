@@ -117,5 +117,9 @@ class TerminalListTest {
         List<StorageIndex.Entry> kept = TerminalList.keepOrder(fresh, before);
         assertEquals(List.of(a, b, c), kept.stream().map(StorageIndex.Entry::item).toList());
         assertEquals(90, kept.get(1).total(), "totals are the fresh ones");
+        // a is gone entirely (all taken): it keeps its place, at 0.
+        List<StorageIndex.Entry> withoutA = TerminalList.keepOrder(List.of(fresh.get(0), fresh.get(1)), before);
+        assertEquals(List.of(a, b, c), withoutA.stream().map(StorageIndex.Entry::item).toList());
+        assertEquals(0, withoutA.get(0).total());
     }
 }

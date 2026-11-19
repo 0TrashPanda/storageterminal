@@ -41,7 +41,6 @@ import net.minecraft.world.item.ItemStack;
  */
 public final class TerminalScreen extends Screen {
     private static final int COLUMNS = 9;
-    private static final int MAX_ROWS = 6;
     private static final int SLOT = 18;
     private static final int PAD = 7;
     private static final int SCROLLBAR_W = 12;
@@ -141,7 +140,8 @@ public final class TerminalScreen extends Screen {
 
     /** All positions in one place. Grid rows shrink on small windows (at least one row). */
     private void layout() {
-        rows = Math.max(1, Math.min(MAX_ROWS, (height - FIXED_H - 8) / SLOT));
+        // As many rows as fit (Refined Storage's "stretch" grid size), at least one.
+        rows = Math.max(1, (height - FIXED_H - 8) / SLOT);
         int panelH = FIXED_H + rows * SLOT;
         left = (width - PANEL_W) / 2;
         top = Math.max(0, (height - panelH) / 2);
@@ -227,9 +227,12 @@ public final class TerminalScreen extends Screen {
         scrollRow = Math.min(scrollRow, maxScrollRow());
     }
 
-    /** Grid order is frozen while items move or a Shift-drag is under way. */
+    /**
+     * Grid order is frozen while items move, a Shift-drag is under way or Shift is held (as in
+     * Refined Storage: Shift-clicking does not shuffle the grid until Shift is let go).
+     */
     private boolean frozen() {
-        return shiftDragging || service.movesPending();
+        return shiftDragging || service.movesPending() || minecraft.hasShiftDown();
     }
 
     private ItemStack stackFor(ItemKey key) {
@@ -406,12 +409,25 @@ public final class TerminalScreen extends Screen {
                 ItemStack stack = stackFor(entry.item());
                 if (!stack.isEmpty()) {
                     g.item(stack, x + 1, y + 1);
-                    // 0: all of it is being taken; it stays (dimmed) until the move is done.
-                    g.itemDecorations(font, stack, x + 1, y + 1,
-                            entry.total() <= 1 ? "" : CountFormat.compact(entry.total()));
+                    g.itemDecorations(font, stack, x + 1, y + 1, "");
+                    if (entry.total() != 1) {
+                        // Half-size count in the corner, like Refined Storage. 0 (all taken, kept in
+                        // place while Shift is held or the move runs) is red.
+                        smallCount(g, CountFormat.compact(entry.total()), x + 1, y + 1,
+                                entry.total() == 0 ? 0xFFFF5555 : 0xFFFFFFFF);
+                    }
                 }
             }
         }
+    }
+
+    /** Draws {@code text} at half size in the bottom-right corner of the 16x16 item at (x, y). */
+    private void smallCount(GuiGraphicsExtractor g, String text, int x, int y, int colour) {
+        g.pose().pushMatrix();
+        g.pose().translate(x + 16, y + 16);
+        g.pose().scale(0.5f, 0.5f);
+        g.text(font, text, -font.width(text), -8, colour, true);
+        g.pose().popMatrix();
     }
 
     /** Entries of a running or queued take are dimmed until it finishes. */

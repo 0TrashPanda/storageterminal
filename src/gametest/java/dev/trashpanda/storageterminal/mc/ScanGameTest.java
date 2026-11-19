@@ -241,8 +241,17 @@ public final class ScanGameTest implements FabricClientGameTest {
             return out;
         });
         check(dragEntries[0] != null && dragEntries[1] != null, "clay and bone shown in the terminal");
-        shiftDrag(context, dragEntries);
+        java.util.List<String> orderBefore = shownIds(context);
+        shiftDrag(context, dragEntries, true);
         waitForJobs(context);
+        // Shift still held: both are all taken but stay in place at 0, and nothing moved (as in RS).
+        check(shownIds(context).equals(orderBefore), "grid order kept while Shift is held");
+        context.runOnClient(mc -> check(entryTotal((TerminalScreen) mc.gui.screen(), "minecraft:clay_ball") == 0
+                && entryTotal((TerminalScreen) mc.gui.screen(), "minecraft:bone") == 0, "taken items stay at 0 while Shift is held"));
+        context.takeScreenshot("12b-shift-held-zeros");
+        context.getInput().releaseShift();
+        context.waitTicks(2);
+        check(!shownIds(context).contains("minecraft:clay_ball"), "the 0 entries go once Shift is let go");
         check(serverCount(world, "minecraft:clay_ball", true) == 5 && serverCount(world, "minecraft:bone", true) == 4,
                 "Shift-drag over the grid took a stack of each");
         check(serverCount(world, "minecraft:clay_ball", false) == 5 && serverCount(world, "minecraft:bone", false) == 4,
@@ -358,8 +367,17 @@ public final class ScanGameTest implements FabricClientGameTest {
         context.waitTick();
     }
 
-    /** Holds Shift and the left button, moves over each GUI position in turn, then lets go. */
+    private static java.util.List<String> shownIds(ClientGameTestContext context) {
+        return context.computeOnClient(mc -> ((TerminalScreen) mc.gui.screen()).shownEntries().stream()
+                .map(e -> e.item().itemId()).toList());
+    }
+
     private static void shiftDrag(ClientGameTestContext context, int[][] guiPositions) {
+        shiftDrag(context, guiPositions, false);
+    }
+
+    /** Holds Shift and the left button, moves over each GUI position in turn, then lets go (of Shift too unless {@code keepShift}). */
+    private static void shiftDrag(ClientGameTestContext context, int[][] guiPositions, boolean keepShift) {
         double scale = context.computeOnClient(mc -> mc.getWindow().getGuiScale());
         context.getInput().setCursorPos(guiPositions[0][0] * scale, guiPositions[0][1] * scale);
         context.waitTick();
@@ -371,7 +389,9 @@ public final class ScanGameTest implements FabricClientGameTest {
         }
         context.waitTick();
         context.getInput().releaseMouse(InputConstants.MOUSE_BUTTON_LEFT);
-        context.getInput().releaseShift();
+        if (!keepShift) {
+            context.getInput().releaseShift();
+        }
         context.waitTick();
     }
 

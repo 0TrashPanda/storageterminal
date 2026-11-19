@@ -97,7 +97,8 @@ public final class TerminalList {
 
     /**
      * {@code fresh} in the order of {@code previous}: entries already shown keep their place,
-     * new ones go at the end. Used while a move runs, so the grid does not jump under the mouse.
+     * new ones go at the end, and ones that are gone stay as 0 (like Refined Storage while Shift
+     * is held). Used while things move, so the grid does not jump under the mouse.
      */
     public static List<StorageIndex.Entry> keepOrder(List<StorageIndex.Entry> fresh, List<StorageIndex.Entry> previous) {
         java.util.Map<ItemKey, Integer> place = new java.util.HashMap<>();
@@ -105,6 +106,15 @@ public final class TerminalList {
             place.putIfAbsent(previous.get(i).item(), i);
         }
         List<StorageIndex.Entry> out = new java.util.ArrayList<>(fresh);
+        java.util.Set<ItemKey> present = new java.util.HashSet<>();
+        for (StorageIndex.Entry entry : fresh) {
+            present.add(entry.item());
+        }
+        for (StorageIndex.Entry old : previous) {
+            if (present.add(old.item())) {
+                out.add(new StorageIndex.Entry(old.item(), 0, List.of(), old.anyStale(), old.lastChangedAt()));
+            }
+        }
         out.sort(java.util.Comparator.comparingInt(e -> place.getOrDefault(e.item(), Integer.MAX_VALUE)));
         return out;
     }
