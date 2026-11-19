@@ -16,7 +16,9 @@ import dev.trashpanda.storageterminal.core.SlotStack;
 import dev.trashpanda.storageterminal.core.SortOrder;
 import dev.trashpanda.storageterminal.core.StorageCache;
 import dev.trashpanda.storageterminal.core.TakePlanner;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -91,6 +93,20 @@ public final class StorageService {
     private int wheelQueued;
     private boolean wheelFailed;
 
+    // Shift-click and Shift-drag: stacks and entries the mouse passed over while a job was running
+    // wait here and run one after another. Consecutive stores are merged into one job.
+    private sealed interface Queued permits QueuedStore, QueuedTake {
+    }
+
+    /** Inventory slots to store, with what each held when it was dragged over. */
+    private record QueuedStore(Map<Integer, ItemStack> slots) implements Queued {
+    }
+
+    private record QueuedTake(ItemKey item) implements Queued {
+    }
+
+    private final Deque<Queued> queued = new ArrayDeque<>();
+
     private StorageService() {
     }
 
@@ -152,6 +168,7 @@ public final class StorageService {
         }
         jobs.tick();
         continueWheel(minecraft);
+        continueQueued(minecraft);
         if (passiveMenu != null && minecraft.player.containerMenu != passiveMenu) {
             capturePassiveAndForget();
         }
@@ -320,12 +337,14 @@ public final class StorageService {
         return feedback != null && System.currentTimeMillis() - feedback.atMillis() < FEEDBACK_MS ? feedback : null;
     }
 
+    /** The take that runs, or is queued to run next (a job only starts on the next tick). */
     TakeJob runningTake() {
-        return jobs.current() instanceof TakeJob take ? take : null;
+        return jobs.currentOrPending(TakeJob.class);
     }
 
+    /** The put that runs, or is queued to run next. */
     PutJob runningPut() {
-        return jobs.current() instanceof PutJob put ? put : null;
+        return jobs.currentOrPending(PutJob.class);
     }
 
     /**
@@ -488,6 +507,91 @@ public final class StorageService {
     private void clearWheel() {
         wheelJobRunning = false;
         wheelQueued = 0;
+        queued.clear();
+    }
+
+    private boolean idle() {
+        return runningTake() == null && runningPut() == null;
+    }
+
+    /** Shift-click or Shift-drag over an inventory stack: store it now, or after the running job. */
+    void queueStore(Minecraft minecraft, int inventoryIndex) {
+        if (minecraft.player == null) {
+            return;
+        }
+        ItemStack stack = minecraft.player.getInventory().getItem(inventoryIndex);
+        if (stack.isEmpty()) {
+            return;
+        }
+        if (idle() && queued.isEmpty()) {
+            startPut(minecraft, List.of(inventoryIndex));
+            return;
+        }
+        if (queued.peekLast() instanceof QueuedStore store) {
+            store.slots().putIfAbsent(inventoryIndex, stack.copyWithCount(1));
+        } else {
+            Map<Integer, ItemStack> slots = new LinkedHashMap<>();
+            slots.put(inventoryIndex, stack.copyWithCount(1));
+            queued.addLast(new QueuedStore(slots));
+        }
+    }
+
+    /** Shift-click or Shift-drag over a grid entry: take one stack now, or after the running job. */
+    void queueTake(Minecraft minecraft, ItemKey item) {
+        if (idle() && queued.isEmpty()) {
+            startTake(minecraft, item, TakePlanner.Mode.STACK);
+            return;
+        }
+        for (Queued q : queued) {
+            if (q instanceof QueuedTake take && take.item().equals(item)) {
+                return;
+            }
+        }
+        queued.addLast(new QueuedTake(item));
+    }
+
+    /** Inventory slots waiting in the queue (dimmed like the ones being stored). */
+    Set<Integer> queuedStoreSlots() {
+        Set<Integer> slots = new HashSet<>();
+        for (Queued q : queued) {
+            if (q instanceof QueuedStore store) {
+                slots.addAll(store.slots().keySet());
+            }
+        }
+        return slots;
+    }
+
+    /** Items waiting in the queue to be taken (dimmed like the one being taken). */
+    Set<ItemKey> queuedTakeItems() {
+        Set<ItemKey> items = new HashSet<>();
+        for (Queued q : queued) {
+            if (q instanceof QueuedTake take) {
+                items.add(take.item());
+            }
+        }
+        return items;
+    }
+
+    /** Starts the next queued store or take once nothing else runs. */
+    private void continueQueued(Minecraft minecraft) {
+        while (!queued.isEmpty() && idle() && !wheelJobRunning && minecraft.player != null) {
+            Queued next = queued.pollFirst();
+            if (next instanceof QueuedStore store) {
+                List<Integer> slots = new ArrayList<>();
+                for (Map.Entry<Integer, ItemStack> e : store.slots().entrySet()) {
+                    ItemStack now = minecraft.player.getInventory().getItem(e.getKey());
+                    // Skip slots that changed to another item since they were dragged over.
+                    if (!now.isEmpty() && ItemStack.isSameItemSameComponents(now, e.getValue())) {
+                        slots.add(e.getKey());
+                    }
+                }
+                if (!slots.isEmpty()) {
+                    startPut(minecraft, slots);
+                }
+            } else if (next instanceof QueuedTake take) {
+                startTake(minecraft, take.item(), TakePlanner.Mode.STACK);
+            }
+        }
     }
 
     private void onPutFinished(Minecraft minecraft, PutJob.Result result) {

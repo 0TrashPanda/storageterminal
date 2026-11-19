@@ -32,7 +32,8 @@ import net.minecraft.world.item.ItemStack;
  * The storage terminal (SPEC section 8, layout A from the approved mockups): search, sort and
  * rescan on top, then a status line, the aggregated item grid with a scrollbar, and the player's
  * inventory. Clicking a grid entry takes items (M3); clicking an inventory stack stores it (M4).
- * Alt + click moves all of an item, Shift + wheel moves one (SPEC 12b).
+ * Alt + click moves all of an item, Shift + wheel moves one, Shift-drag moves a stack of
+ * everything the mouse passes over (SPEC 12b).
  *
  * <p>Controls are placed by {@link #layout()} only, so they can move to a sidebar (layout B)
  * later without touching the rest.
@@ -92,6 +93,10 @@ public final class TerminalScreen extends Screen {
     private List<StorageIndex.Entry> shown = List.of();
     private int scrollRow;
     private boolean draggingScrollbar;
+    /** Shift-drag: what this drag already passed over, so each stack or entry is moved once. */
+    private boolean shiftDragging;
+    private final java.util.Set<Integer> dragInventory = new java.util.HashSet<>();
+    private final java.util.Set<ItemKey> dragEntries = new java.util.HashSet<>();
     /** Full status breakdown, shown on hover when the status line had to be shortened. */
     private List<Component> statusDetail;
 
@@ -368,15 +373,19 @@ public final class TerminalScreen extends Screen {
         }
     }
 
-    /** Entries of a running take are dimmed until it finishes. */
+    /** Entries of a running or queued take are dimmed until it finishes. */
     private void drawBusy(GuiGraphicsExtractor g) {
         TakeJob take = service.runningTake();
-        if (take == null) {
+        java.util.Set<ItemKey> busy = new java.util.HashSet<>(service.queuedTakeItems());
+        if (take != null) {
+            busy.add(take.item());
+        }
+        if (busy.isEmpty()) {
             return;
         }
         int first = scrollRow * COLUMNS;
         for (int i = 0; i < rows * COLUMNS && first + i < shown.size(); i++) {
-            if (shown.get(first + i).item().equals(take.item())) {
+            if (busy.contains(shown.get(first + i).item())) {
                 int x = gridX + (i % COLUMNS) * SLOT;
                 int y = gridY + (i / COLUMNS) * SLOT;
                 g.fill(x + 1, y + 1, x + SLOT - 1, y + SLOT - 1, 0xA08B8B8B);
@@ -444,7 +453,10 @@ public final class TerminalScreen extends Screen {
     private void drawInventory(GuiGraphicsExtractor g) {
         Inventory inventory = minecraft.player == null ? null : minecraft.player.getInventory();
         PutJob put = service.runningPut();
-        java.util.Set<Integer> storing = put == null ? java.util.Set.of() : put.pendingInventorySlots();
+        java.util.Set<Integer> storing = new java.util.HashSet<>(service.queuedStoreSlots());
+        if (put != null) {
+            storing.addAll(put.pendingInventorySlots());
+        }
         for (int i = 0; i < 36; i++) {
             int[] xy = inventorySlotXY(i);
             drawSlot(g, xy[0], xy[1]);
@@ -524,7 +536,7 @@ public final class TerminalScreen extends Screen {
         }
         lines.add(Component.literal("Click: 1 stack \u00B7 Right-click: half")
                 .withStyle(ChatFormatting.GRAY, ChatFormatting.ITALIC));
-        lines.add(Component.literal("Alt-click: fill inventory \u00B7 Shift+wheel: 1")
+        lines.add(Component.literal("Alt-click: fill \u00B7 Shift+wheel: 1 \u00B7 Shift-drag")
                 .withStyle(ChatFormatting.GRAY, ChatFormatting.ITALIC));
         return lines;
     }
@@ -579,8 +591,15 @@ public final class TerminalScreen extends Screen {
         return event.hasAltDown() || minecraft.hasAltDown();
     }
 
+    private boolean shiftDown(MouseButtonEvent event) {
+        return event.hasShiftDown() || minecraft.hasShiftDown();
+    }
+
     @Override
     public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
+        dragInventory.clear();
+        dragEntries.clear();
+        shiftDragging = false;
         if (event.button() == InputConstants.MOUSE_BUTTON_LEFT && onScrollbar(event.x(), event.y())) {
             draggingScrollbar = true;
             scrollTo(event.y());
@@ -590,7 +609,12 @@ public final class TerminalScreen extends Screen {
         if (inventoryIndex >= 0 && minecraft.player != null) {
             if (event.button() == InputConstants.MOUSE_BUTTON_LEFT) {
                 ItemStack clicked = minecraft.player.getInventory().getItem(inventoryIndex);
-                if (!clicked.isEmpty()) {
+                if (shiftDown(event) && !altDown(event)) {
+                    // Shift-click: this stack, queued if a job runs; the drag may add more.
+                    shiftDragging = true;
+                    dragInventory.add(inventoryIndex);
+                    service.queueStore(minecraft, inventoryIndex);
+                } else if (!clicked.isEmpty()) {
                     List<Integer> slots = new ArrayList<>();
                     if (altDown(event)) {
                         // Every stack of this item, main inventory and hotbar.
@@ -601,7 +625,6 @@ public final class TerminalScreen extends Screen {
                             }
                         }
                     } else {
-                        // Click and Shift + click: just this stack.
                         slots.add(inventoryIndex);
                     }
                     service.startPut(minecraft, slots);
@@ -611,12 +634,21 @@ public final class TerminalScreen extends Screen {
         }
         if (gridSlotAt((int) event.x(), (int) event.y()) >= 0) {
             StorageIndex.Entry entry = entryAt((int) event.x(), (int) event.y());
+            if (event.button() == InputConstants.MOUSE_BUTTON_LEFT && shiftDown(event) && !altDown(event)) {
+                // Shift-click: one stack, queued if a job runs; the drag may add more.
+                shiftDragging = true;
+                if (entry != null) {
+                    dragEntries.add(entry.item());
+                    service.queueTake(minecraft, entry.item());
+                }
+                return true;
+            }
             if (entry != null) {
                 TakePlanner.Mode mode;
                 if (event.button() == InputConstants.MOUSE_BUTTON_RIGHT) {
                     mode = TakePlanner.Mode.HALF;
                 } else if (event.button() == InputConstants.MOUSE_BUTTON_LEFT) {
-                    // Alt + click: all that fits. Click and Shift + click: one stack.
+                    // Alt + click: all that fits. Click: one stack.
                     mode = altDown(event) ? TakePlanner.Mode.FILL : TakePlanner.Mode.STACK;
                 } else {
                     return true;
@@ -634,13 +666,35 @@ public final class TerminalScreen extends Screen {
             scrollTo(event.y());
             return true;
         }
+        if (event.button() == InputConstants.MOUSE_BUTTON_LEFT && minecraft.player != null
+                && (shiftDragging || shiftDown(event))) {
+            shiftDragOver((int) event.x(), (int) event.y());
+            return true;
+        }
         return super.mouseDragged(event, dx, dy);
     }
 
     @Override
     public boolean mouseReleased(MouseButtonEvent event) {
         draggingScrollbar = false;
+        shiftDragging = false;
         return super.mouseReleased(event);
+    }
+
+    /** Shift-drag passed over (x, y): store that inventory stack or take a stack of that entry, once per drag. */
+    private void shiftDragOver(int x, int y) {
+        shiftDragging = true;
+        int inventoryIndex = inventoryIndexAt(x, y);
+        if (inventoryIndex >= 0) {
+            if (!minecraft.player.getInventory().getItem(inventoryIndex).isEmpty() && dragInventory.add(inventoryIndex)) {
+                service.queueStore(minecraft, inventoryIndex);
+            }
+            return;
+        }
+        StorageIndex.Entry entry = entryAt(x, y);
+        if (entry != null && dragEntries.add(entry.item())) {
+            service.queueTake(minecraft, entry.item());
+        }
     }
 
     private boolean onScrollbar(double x, double y) {

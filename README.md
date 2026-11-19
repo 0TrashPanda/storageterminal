@@ -27,6 +27,7 @@ Put the Storage Terminal jar and Fabric API in your `mods` folder. Only you need
 | Click or Shift-click a stack in your inventory | Store it. |
 | Alt-click a stack in your inventory | Store every stack of that item. |
 | Shift + wheel over a stack in your inventory | Wheel up stores 1 of it, wheel down takes 1 more onto it. |
+| Shift-drag over items or inventory stacks | Take a stack of every item, or store every stack, the mouse passes over. They are done one after another. |
 | **Deposit all** | Store your main inventory. The hotbar stays. |
 | **Scan** | Look into every container in reach again. |
 | **Cancel** | Stop the running take or store. |

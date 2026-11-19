@@ -210,11 +210,11 @@ Execution mirrors Take: open, await sync, re-verify free space, move the stack w
 
 Hooks to leave now: extensible string-based tags, `StorageSource` abstraction, generic `JobQueue`, `ItemKey` that includes components, a version field in the cache schema.
 
-## 12b. Interaction improvements (after v1; Shift + wheel, Shift-click and Alt-click are implemented, the rest not yet)
+## 12b. Interaction improvements (after v1; Shift + wheel, Shift-click, Alt-click and Shift-drag are implemented, the rest not yet)
 
 Feedback from the first manual play test (2026-11-18): the terminal's clicks work but feel limited. **Before designing any of this, compare how Refined Storage and AE2 handle each point** (their grid/terminal controls, modifier keys, what feels natural to players used to them) and write the chosen design here. Then decide with the user.
 
-- **Shift-drag.** Hold shift and drag the mouse over several stacks to move them all, like vanilla's shift-drag in inventories: over inventory stacks to store each one, and possibly over grid entries to take a stack of each.
+- **Shift-drag (implemented 2026-11-19).** Hold shift and drag the mouse over several stacks to move them all, like vanilla's shift-drag in inventories: over inventory stacks to store each one, and possibly over grid entries to take a stack of each.
 - **Shift + wheel moves 1 item (decided 2026-11-19).** Same as RS and AE2. Over a grid entry: wheel down takes 1 of that item into the inventory, wheel up stores 1 back. Over an inventory stack: wheel up stores 1 of it, wheel down takes 1 of that item from storage onto the stack. Plain wheel is never used for moving: it scrolls the grid, and over a bundle in the inventory panel it does vanilla bundle item selection (we send the selection packet ourselves, since the terminal isn't a vanilla container screen). Item Scroller only acts in vanilla container screens, so it ignores the terminal and there is no clash and no compat code needed.
 - **Alt + click moves all of the same item (decided 2026-11-19).** Alt + click on an inventory stack stores every stack of that item; Alt + click on a grid entry takes as much of that item as fits in the inventory. Shift + click then moves one stack, like vanilla shift-click (decided 2026-11-19): on a grid entry it takes one stack straight into the inventory, on an inventory stack it stores that stack. Plain clicks are left for the cursor design below (pick up / place, as in vanilla).
 - **Take exactly 1 item.** Covered by Shift + wheel down above; a click for it (e.g. Shift + right click, as in AE2) can be added if wanted.

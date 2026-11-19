@@ -31,6 +31,19 @@ public final class JobQueue {
         return current;
     }
 
+    /** The running job if it matches, else the first waiting one that matches, else null. */
+    public <T extends Job> T currentOrPending(Class<T> type) {
+        if (type.isInstance(current)) {
+            return type.cast(current);
+        }
+        for (Job job : pending) {
+            if (type.isInstance(job)) {
+                return type.cast(job);
+            }
+        }
+        return null;
+    }
+
     public void tick() {
         if (current == null) {
             current = pending.pollFirst();

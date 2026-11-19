@@ -115,3 +115,10 @@ One line each: what, why. Newest at the bottom.
 - Taking onto a given stack: the take uses the pick-up/place path and places onto that inventory slot when the items fit there; else the usual target.
 - Wheel-up over a grid entry stores from the smallest stack of that item, main inventory before hotbar.
 - In-game tests: Shift + wheel take (two quick notches) and store with server-side counts; Shift-click stores one stack, Alt-click the rest; the dedicated-server test uses Alt-click and a Shift + wheel round trip.
+
+## Shift-drag (2026-11-19, SPEC 12b)
+
+- Shift-drag with the left button: every inventory stack the mouse passes over is stored, every grid entry gets one stack taken; each at most once per drag. Shift-click goes the same way, so it is queued too instead of saying "Busy".
+- Work that arrives while a job runs waits in a queue in `StorageService` and runs one job after another; stores dragged over in a row are merged into one put job, so each container is opened once. A queued stack is skipped if its slot now holds a different item. Waiting stacks and entries are dimmed like running ones. Closing the terminal or Cancel drops the queue.
+- Fix found by the new test: a job only becomes current on the next tick, so between two queued jobs nothing looked "running". `runningTake()`/`runningPut()` now include a waiting job (`JobQueue.currentOrPending`), so Busy checks, the status line and the tests see it.
+- In-game tests: Shift-drag over three inventory stacks stores all three, over two grid entries takes both, with server-side counts and a check that server and client have no container left open (also after Shift + wheel). The Deposit all test now waits until the client sees its test items instead of a fixed 3 ticks.

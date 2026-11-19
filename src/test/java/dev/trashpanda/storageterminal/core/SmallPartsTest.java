@@ -82,6 +82,17 @@ class SmallPartsTest {
         assertEquals(1, second.ticks, "a cancelled job is never ticked again");
     }
 
+    @Test
+    void queuedJobCountsBeforeItStarts() {
+        JobQueue queue = new JobQueue((job, status) -> { });
+        CountingJob job = new CountingJob("only", 1, new java.util.ArrayList<>());
+        queue.enqueue(job);
+        assertEquals(null, queue.current(), "starts on the next tick");
+        assertEquals(job, queue.currentOrPending(CountingJob.class), "but already counts as running");
+        queue.tick();
+        assertEquals(null, queue.currentOrPending(CountingJob.class), "done");
+    }
+
     private static final class CountingJob implements Job {
         private final String name;
         private final int length;

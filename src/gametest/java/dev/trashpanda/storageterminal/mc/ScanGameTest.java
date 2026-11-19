@@ -186,6 +186,7 @@ public final class ScanGameTest implements FabricClientGameTest {
                 + serverCount(world, "minecraft:gold_ingot", true));
         check(serverCount(world, "minecraft:gold_ingot", false) == goldNow, "gold neither lost nor duplicated (wheel)");
         context.runOnClient(mc -> check(mc.player.containerMenu.getCarried().isEmpty(), "cursor empty after wheel"));
+        checkNoOpenContainer(context, world, "after Shift + wheel");
 
         // Shift-click stores one stack only; Alt-click then stores every cobblestone stack.
         world.getServer().runCommand("give @a minecraft:cobblestone 100");
@@ -204,11 +205,56 @@ public final class ScanGameTest implements FabricClientGameTest {
         check(serverCount(world, "minecraft:cobblestone", true) == 0, "all cobblestone stacks stored");
         check(serverCount(world, "minecraft:cobblestone", false) == cobbleTotal, "cobblestone neither lost nor duplicated");
 
+        // Shift-drag over three inventory stacks stores all three (the 2nd and 3rd wait for the 1st job),
+        // then Shift-drag over two grid entries takes a stack of each.
+        world.getServer().runCommand("item replace entity @a inventory.10 with minecraft:clay_ball 5");
+        world.getServer().runCommand("item replace entity @a inventory.11 with minecraft:bone 4");
+        world.getServer().runCommand("item replace entity @a inventory.12 with minecraft:snowball 3");
+        context.waitTicks(3);
+        int[][] dragSlots = context.computeOnClient(mc -> {
+            TerminalScreen screen = (TerminalScreen) mc.gui.screen();
+            return new int[][] {screen.inventorySlotCenter(19), screen.inventorySlotCenter(20), screen.inventorySlotCenter(21)};
+        });
+        shiftDrag(context, dragSlots);
+        context.takeScreenshot("12b-shift-drag-store");
+        waitForJobs(context);
+        for (String id : List.of("minecraft:clay_ball", "minecraft:bone", "minecraft:snowball")) {
+            check(serverCount(world, id, true) == 0, id + " stored by Shift-drag");
+        }
+        check(serverCount(world, "minecraft:clay_ball", false) == 5 && serverCount(world, "minecraft:bone", false) == 4
+                && serverCount(world, "minecraft:snowball", false) == 3, "dragged items neither lost nor duplicated");
+        checkNoOpenContainer(context, world, "after Shift-drag store");
+        int[][] dragEntries = context.computeOnClient(mc -> {
+            TerminalScreen screen = (TerminalScreen) mc.gui.screen();
+            List<StorageIndex.Entry> shown = screen.shownEntries();
+            int[][] out = new int[2][];
+            for (int i = 0; i < shown.size(); i++) {
+                String id = shown.get(i).item().itemId();
+                if (id.equals("minecraft:clay_ball")) {
+                    out[0] = screen.gridSlotCenter(i);
+                } else if (id.equals("minecraft:bone")) {
+                    out[1] = screen.gridSlotCenter(i);
+                }
+            }
+            return out;
+        });
+        check(dragEntries[0] != null && dragEntries[1] != null, "clay and bone shown in the terminal");
+        shiftDrag(context, dragEntries);
+        waitForJobs(context);
+        check(serverCount(world, "minecraft:clay_ball", true) == 5 && serverCount(world, "minecraft:bone", true) == 4,
+                "Shift-drag over the grid took a stack of each");
+        check(serverCount(world, "minecraft:clay_ball", false) == 5 && serverCount(world, "minecraft:bone", false) == 4,
+                "taken items neither lost nor duplicated");
+        context.runOnClient(mc -> check(mc.player.containerMenu.getCarried().isEmpty(), "cursor empty after Shift-drag"));
+        checkNoOpenContainer(context, world, "after Shift-drag");
+
         // Deposit all: main inventory only, the hotbar stays.
         world.getServer().runCommand("item replace entity @a inventory.5 with minecraft:string 7");
         world.getServer().runCommand("item replace entity @a inventory.6 with minecraft:flint 3");
         world.getServer().runCommand("item replace entity @a hotbar.4 with minecraft:torch 16");
-        context.waitTicks(3);
+        // Wait until the client sees the new stacks, not a fixed number of ticks.
+        context.waitFor(mc -> !mc.player.getInventory().getItem(14).isEmpty() && !mc.player.getInventory().getItem(15).isEmpty()
+                && !mc.player.getInventory().getItem(4).isEmpty(), 100);
         long stringTotal = serverCount(world, "minecraft:string", false);
         clickDepositAll(context);
         waitForPut(context);
@@ -308,6 +354,36 @@ public final class ScanGameTest implements FabricClientGameTest {
         context.getInput().scroll(amount);
         context.getInput().releaseShift();
         context.waitTick();
+    }
+
+    /** Holds Shift and the left button, moves over each GUI position in turn, then lets go. */
+    private static void shiftDrag(ClientGameTestContext context, int[][] guiPositions) {
+        double scale = context.computeOnClient(mc -> mc.getWindow().getGuiScale());
+        context.getInput().setCursorPos(guiPositions[0][0] * scale, guiPositions[0][1] * scale);
+        context.waitTick();
+        context.getInput().holdShift();
+        context.getInput().holdMouse(InputConstants.MOUSE_BUTTON_LEFT);
+        for (int i = 1; i < guiPositions.length; i++) {
+            context.waitTick();
+            context.getInput().setCursorPos(guiPositions[i][0] * scale, guiPositions[i][1] * scale);
+        }
+        context.waitTick();
+        context.getInput().releaseMouse(InputConstants.MOUSE_BUTTON_LEFT);
+        context.getInput().releaseShift();
+        context.waitTick();
+    }
+
+    /** Server and client agree that no container is open (only the player's own inventory). */
+    private static void checkNoOpenContainer(ClientGameTestContext context, TestSingleplayerContext world, String when) {
+        String server = world.getServer().computeOnServer(s -> {
+            var player = s.getPlayerList().getPlayers().get(0);
+            return player.containerMenu == player.inventoryMenu ? "inventory"
+                    : player.containerMenu.getClass().getSimpleName() + "#" + player.containerMenu.containerId;
+        });
+        String client = context.computeOnClient(mc -> mc.player.containerMenu == mc.player.inventoryMenu ? "inventory"
+                : mc.player.containerMenu.getClass().getSimpleName() + "#" + mc.player.containerMenu.containerId);
+        check("inventory".equals(server) && "inventory".equals(client),
+                "no container left open " + when + " (server " + server + ", client " + client + ")");
     }
 
     private static void waitForJobs(ClientGameTestContext context) {
