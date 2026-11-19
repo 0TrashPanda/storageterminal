@@ -249,6 +249,7 @@ public final class TerminalScreen extends Screen {
         refreshEntries();
         drawPanel(g, left, top, PANEL_W, FIXED_H + rows * SLOT);
         g.text(font, title, left + PAD, top + 6, TEXT, false);
+        g.text(font, "?", helpX(), top + 6, TEXT, false);
         cancelButton.visible = service.runningTake() != null || service.runningPut() != null;
         drawStatus(g);
         drawGrid(g);
@@ -281,6 +282,8 @@ public final class TerminalScreen extends Screen {
             ItemStack invStack = inventoryStackAt(mouseX, mouseY);
             if (!invStack.isEmpty()) {
                 g.setTooltipForNextFrame(font, invStack, mouseX, mouseY);
+            } else if (onHelp(mouseX, mouseY)) {
+                g.setTooltipForNextFrame(font, HELP, java.util.Optional.empty(), mouseX, mouseY);
             } else if (statusDetail != null && mouseX >= left + PAD && mouseX < left + PAD + STATUS_W
                     && mouseY >= top + 32 && mouseY < top + 43) {
                 g.setTooltipForNextFrame(font, statusDetail, java.util.Optional.empty(), mouseX, mouseY);
@@ -571,13 +574,27 @@ public final class TerminalScreen extends Screen {
         List<Component> lines = new ArrayList<>(Screen.getTooltipFromItem(minecraft, stack));
         lines.add(Component.literal(CountFormat.exact(entry.total()) + " stored").withStyle(ChatFormatting.GRAY));
         if (entry.anyStale()) {
-            lines.add(Component.literal("Partly from saved contents, not rescanned yet").withStyle(ChatFormatting.GOLD));
+            lines.add(Component.literal("Not rescanned yet").withStyle(ChatFormatting.GOLD));
         }
-        lines.add(Component.literal("Click: 1 stack \u00B7 Right-click: half \u00B7 Shift: to inventory")
-                .withStyle(ChatFormatting.GRAY, ChatFormatting.ITALIC));
-        lines.add(Component.literal("Alt-click: fill \u00B7 Shift+wheel: 1 \u00B7 Shift-drag")
-                .withStyle(ChatFormatting.GRAY, ChatFormatting.ITALIC));
         return lines;
+    }
+
+    /** The controls, shown when hovering the "?" in the title bar (kept out of item tooltips so they stay small). */
+    private static final List<Component> HELP = List.of(
+            Component.literal("Controls"),
+            Component.literal("Click: a stack onto the cursor \u00B7 Right-click: half").withStyle(ChatFormatting.GRAY),
+            Component.literal("Holding: click the grid to store (right: one)").withStyle(ChatFormatting.GRAY),
+            Component.literal("Holding: click outside to drop").withStyle(ChatFormatting.GRAY),
+            Component.literal("Shift-click: a stack to or from the inventory").withStyle(ChatFormatting.GRAY),
+            Component.literal("Alt-click: all of an item").withStyle(ChatFormatting.GRAY),
+            Component.literal("Shift + wheel: one item \u00B7 Shift-drag: many").withStyle(ChatFormatting.GRAY));
+
+    private int helpX() {
+        return left + PANEL_W - PAD - 6;
+    }
+
+    private boolean onHelp(int x, int y) {
+        return x >= helpX() - 2 && x < helpX() + 8 && y >= top + 4 && y < top + 15;
     }
 
     // ---- input ----------------------------------------------------------------------------

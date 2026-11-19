@@ -21,7 +21,7 @@ Set up a room with: a single chest, a double chest, a trapped chest, a barrel, a
 - [ ] The blocked chest and the one out of reach are not counted; the status line says how many were skipped (hover for details).
 - [ ] Search by name, `@minecraft`, `#c:ingots`; a search with no results shows "Nothing matches".
 - [ ] The sort button cycles Count, Name, Mod, Recent; reopen the game: the last sort is kept.
-- [ ] Tooltip shows the item, "N stored" and the click hints.
+- [ ] Tooltip is short: the item, "N stored" (and "Not rescanned yet" if so). Hovering the "?" in the title bar lists the controls.
 - [ ] Very small window and very large GUI scale: the grid gets fewer rows, nothing overlaps badly, no crash.
 
 ### Take
